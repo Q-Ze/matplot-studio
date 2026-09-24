@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matplot-studio"
+version = "0.1.0"
+description = "A local-first visual editor and live renderer for Matplotlib figures"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.110",
+  "matplotlib>=3.8",
+  "numpy>=1.26",
+  "pandas>=2.3.3",
+  "pydantic>=2.4",
+  "scipy>=1.13.1",
+  "uvicorn>=0.29",
+]
+
+[project.scripts]
+matplot-studio = "matplot_studio.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["matplot_studio*"]

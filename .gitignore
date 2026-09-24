@@ -1,0 +1,62 @@
+# Python and build output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Operating-system and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local credentials and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+*secrets*.json
+
+# Private projects, source figures, and local exports. These directories are
+# intentionally never part of the public repository.
+/workspace/
+/intial_plot_code/
+/tests/test_demo_plots.py
+/data/
+/figures/
+/exports/
+
+# Common research-data and rendered-figure formats are ignored by default to
+# reduce the chance of publishing private inputs or outputs accidentally.
+*.csv
+*.tsv
+*.xls
+*.xlsx
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.db
+*.sqlite
+*.sqlite3
+*.zip
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.pdf
+*.eps
+*.svg
+!/web/favicon.svg
