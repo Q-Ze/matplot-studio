@@ -59,7 +59,12 @@ workspace/
 
 ## 转换原始绘图代码
 
-项目内提供了 `$matplot-studio-converter` skill，可让 coding agent 将原始 Matplotlib 脚本拆分并转换为上述规范。转换时，数据准备必须保留在同一个 `plot.py`；缺少真实依赖或数据时，应生成确定性的演示数据并明确标注，而不是留下无法运行的本地 import。
+项目内提供了两个 skills：
+
+- `$matplot-studio-converter`：将已有 Matplotlib 绘图脚本转换为规范 `plot.py`。
+- `$matplot-studio-generator`：从用户授权的原始数据出发，完成数据处理、图表设计，并直接生成规范 `plot.py` 或完整项目。
+
+两者都会把渲染所需数据和处理逻辑放进同一个 `plot.py`，执行静态校验和 smoke 渲染；缺少真实依赖或数据时，应生成确定性的演示数据并明确标注，而不是留下无法运行的本地 import。
 
 ## 验证
 
