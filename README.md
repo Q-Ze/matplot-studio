@@ -9,7 +9,7 @@ Matplot Studio 是一个面向 Python 用户与科研人员的本地 Web 应用�
 - 从规范代码自动读取属性，并将修改写回 `PLOT_SETTINGS`
 - 属性添加、删除、类型校验和 revision 冲突保护
 - SVG 实时预览以及缩放、平移、适应窗口
-- PNG、SVG、PDF 图片导出（保持画布尺寸或紧裁切），600 DPI PNG 一键复制到剪贴板，以及 CSV、JSON 数据导出
+- PNG、SVG、PDF 图片导出（保持画布尺寸或紧裁切），同边界模式的 600 DPI PNG 一键复制，以及 CSV、JSON 数据导出
 - 独立 Python 子进程渲染、超时终止和 traceback 展示
 - 可新建空项目，也可导入符合契约的项目或独立 `plot.py`
 

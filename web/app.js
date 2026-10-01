@@ -395,8 +395,9 @@
     dom.imageBoundsCanvas.setAttribute("aria-pressed", String(!tight));
     dom.imageBoundsTight.setAttribute("aria-pressed", String(tight));
     dom.imageBoundsNote.textContent = tight
-      ? "裁掉外围留白，更接近 bbox_inches=\"tight\"；实际尺寸会变化。"
-      : "保持设置的英寸尺寸，适合 PowerPoint。";
+      ? "裁掉外围留白；导出和复制都会按裁切后的实际尺寸处理。"
+      : "保持设置的英寸尺寸；导出和复制都适合 PowerPoint。";
+    updateExportControls();
   }
 
   function updateExportControls() {
@@ -440,9 +441,13 @@
         ? "请先完成图表渲染"
         : clipboardUnavailable
           ? "当前浏览器环境不支持复制图片，可使用“导出图片”下载 PNG"
-          : "复制 PNG 到剪贴板";
+          : `复制${state.imageExportBounds === "tight" ? "紧裁切" : "保持画布"} PNG 到剪贴板`;
     dom.copyPngButton.classList.toggle("is-busy", state.copyingPng);
-    dom.copyPngButton.setAttribute("aria-label", state.copyingPng ? "正在复制 PNG" : "复制 PNG 到剪贴板");
+    const copyBoundsLabel = state.imageExportBounds === "tight" ? "紧裁切" : "保持画布";
+    dom.copyPngButton.setAttribute(
+      "aria-label",
+      state.copyingPng ? "正在复制 PNG" : `复制${copyBoundsLabel} PNG 到剪贴板`,
+    );
     $(".copy-png-button__label", dom.copyPngButton).textContent = state.copyingPng ? "正在复制…" : "复制 PNG";
 
     const imageLabel = $(".export-toggle__label", dom.imageExportButton);
@@ -528,21 +533,6 @@
     return friendlyError(error);
   }
 
-  function clipboardFigureSizeInches() {
-    const configured = getPath(state.settings, "figure.size");
-    if (Array.isArray(configured) && configured.length === 2) {
-      const width = Number(configured[0]);
-      const height = Number(configured[1]);
-      if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
-        return [width, height];
-      }
-    }
-    if (state.asset.width > 0 && state.asset.height > 0) {
-      return [state.asset.width / 96, state.asset.height / 96];
-    }
-    return null;
-  }
-
   function blobToDataUrl(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -552,11 +542,22 @@
     });
   }
 
+  async function pngPhysicalSizeInches(png) {
+    const header = new Uint8Array(await png.slice(0, 24).arrayBuffer());
+    const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+    if (header.length < 24 || !signature.every((value, index) => header[index] === value)) {
+      throw new Error("无法读取 PNG 图像尺寸。");
+    }
+    const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+    const width = view.getUint32(16, false);
+    const height = view.getUint32(20, false);
+    if (!width || !height) throw new Error("PNG 图像尺寸无效。");
+    return [width / CLIPBOARD_PNG_DPI, height / CLIPBOARD_PNG_DPI];
+  }
+
   async function prepareClipboardHtml(pngPromise) {
     const png = await pngPromise;
-    const size = clipboardFigureSizeInches();
-    if (!size) throw new Error("无法确定图像的物理尺寸。");
-    const [widthInches, heightInches] = size;
+    const [widthInches, heightInches] = await pngPhysicalSizeInches(png);
     const dataUrl = await blobToDataUrl(png);
     const widthPoints = (widthInches * 72).toFixed(4).replace(/\.?0+$/, "");
     const heightPoints = (heightInches * 72).toFixed(4).replace(/\.?0+$/, "");
@@ -566,7 +567,7 @@
     return new Blob([html], { type: "text/html" });
   }
 
-  async function prepareClipboardPng(projectId, plotId) {
+  async function prepareClipboardPng(projectId, plotId, bounds) {
     if (state.propertyTimers.size) {
       await waitUntil(() => state.propertyTimers.size === 0, 3000);
     }
@@ -580,8 +581,13 @@
     }
 
     // Keep the clipboard image publication-quality. Logical display size is
-    // provided separately because PowerPoint ignores PNG pHYs metadata.
-    const url = `${plotPath(projectId, plotId)}/export/image?format=png&dpi=${CLIPBOARD_PNG_DPI}`;
+    // derived from the generated pixels because PowerPoint ignores PNG pHYs metadata.
+    const parameters = new URLSearchParams({
+      format: "png",
+      dpi: String(CLIPBOARD_PNG_DPI),
+      bounds,
+    });
+    const url = `${plotPath(projectId, plotId)}/export/image?${parameters.toString()}`;
     const response = await fetch(url, {
       headers: { Accept: "image/png" },
       credentials: "same-origin",
@@ -619,6 +625,7 @@
 
     const projectId = state.project.id;
     const plotId = state.plot.id;
+    const bounds = state.imageExportBounds;
     state.copyingPng = true;
     state.statusError = null;
     closeExportMenus();
@@ -628,14 +635,15 @@
     try {
       // Edge/Chromium requires clipboard.write() to run during the original click.
       // ClipboardItem accepts a Blob promise, so saving and PNG generation can finish afterward.
-      const pngPromise = prepareClipboardPng(projectId, plotId);
+      const pngPromise = prepareClipboardPng(projectId, plotId, bounds);
       const representations = { "image/png": pngPromise };
       if (typeof window.ClipboardItem.supports !== "function" || window.ClipboardItem.supports("text/html")) {
         representations["text/html"] = prepareClipboardHtml(pngPromise);
       }
       await navigator.clipboard.write([new window.ClipboardItem(representations)]);
       state.statusError = null;
-      showToast(`${CLIPBOARD_PNG_DPI} DPI PNG 已复制到剪贴板`, "success", 3000);
+      const boundsLabel = bounds === "tight" ? "紧裁切" : "保持画布";
+      showToast(`${boundsLabel} ${CLIPBOARD_PNG_DPI} DPI PNG 已复制到剪贴板`, "success", 3000);
     } catch (error) {
       reportStatusError("复制失败");
       showToast(friendlyClipboardError(error), "error", 6000);
