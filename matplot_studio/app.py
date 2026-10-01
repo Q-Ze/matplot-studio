@@ -369,6 +369,7 @@ def create_app(
         plot: str,
         format: Literal["png", "svg", "pdf"] = Query(default="png"),
         dpi: Annotated[Optional[int], Query(ge=36, le=600)] = None,
+        bounds: Literal["canvas", "tight"] = "canvas",
     ) -> Response:
         if dpi is not None:
             if isinstance(dpi, bool) or not isinstance(dpi, int) or not 36 <= dpi <= 600:
@@ -386,7 +387,7 @@ def create_app(
                     extra={"format": format},
                 )
         document = store.read_plot(project, plot)
-        result = renderer.export_image(document.path, document.code, format, dpi=dpi)
+        result = renderer.export_image(document.path, document.code, format, dpi=dpi, bounds=bounds)
         if not result.ok or result.content is None:
             return JSONResponse(status_code=422, content={"error": result.public_dict()})
         media_types = {"png": "image/png", "svg": "image/svg+xml", "pdf": "application/pdf"}
@@ -394,7 +395,9 @@ def create_app(
             content=result.content,
             media_type=media_types[format],
             headers={
-                "Content-Disposition": f'attachment; filename="{document.plot}.{format}"',
+                "Content-Disposition": (
+                    f'attachment; filename="{document.plot}{"-tight" if bounds == "tight" else ""}.{format}"'
+                ),
                 "Cache-Control": "no-store",
                 "X-Content-Type-Options": "nosniff",
             },

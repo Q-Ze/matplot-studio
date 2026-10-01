@@ -498,6 +498,15 @@ class StorageTests(TemporaryWorkspace):
         self.assertEqual(image.headers["content-disposition"], 'attachment; filename="demo.png"')
         self.assertTrue(image.body.startswith(b"\x89PNG"))
 
+        tight_image = endpoints["/api/projects/{project}/plots/{plot}/export/image"](
+            "demo-project", "demo", "png", None, "tight"
+        )
+        self.assertEqual(
+            tight_image.headers["content-disposition"],
+            'attachment; filename="demo-tight.png"',
+        )
+        self.assertTrue(tight_image.body.startswith(b"\x89PNG"))
+
         data = endpoints["/api/projects/{project}/plots/{plot}/export/data"](
             "demo-project", "demo", "json"
         )
@@ -584,6 +593,30 @@ class RenderingTests(TemporaryWorkspace):
         self.assertAlmostEqual((dpi or (0, 0))[0], 600, delta=0.02)
         self.assertAlmostEqual((dpi or (0, 0))[1], 600, delta=0.02)
 
+    def test_tight_png_export_crops_the_fixed_canvas(self):
+        document = ProjectStore(self.workspace).read_plot("demo-project", "demo")
+        renderer = Renderer(timeout_seconds=30)
+        canvas = renderer.export_image(
+            document.path,
+            document.code,
+            "png",
+            dpi=100,
+            bounds="canvas",
+        )
+        tight = renderer.export_image(
+            document.path,
+            document.code,
+            "png",
+            dpi=100,
+            bounds="tight",
+        )
+        self.assertTrue(canvas.ok, canvas.traceback)
+        self.assertTrue(tight.ok, tight.traceback)
+        canvas_size, _ = png_size_and_dpi(canvas.content or b"")
+        tight_size, _ = png_size_and_dpi(tight.content or b"")
+        self.assertEqual(canvas_size, (400, 300))
+        self.assertLess(tight_size[0] * tight_size[1], canvas_size[0] * canvas_size[1])
+
     def test_renderer_rejects_invalid_or_non_png_dpi(self):
         document = ProjectStore(self.workspace).read_plot("demo-project", "demo")
         renderer = Renderer(timeout_seconds=30)
@@ -594,6 +627,8 @@ class RenderingTests(TemporaryWorkspace):
         for output_format in ("svg", "pdf"):
             with self.subTest(output_format=output_format), self.assertRaises(ValueError):
                 renderer.export_image(document.path, document.code, output_format, dpi=144)
+        with self.assertRaises(ValueError):
+            renderer.export_image(document.path, document.code, "png", bounds="outside")
 
     def test_exports_numpy_columns_as_json_and_csv(self):
         source = VALID_PLOT.replace(

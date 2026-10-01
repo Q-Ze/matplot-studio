@@ -944,6 +944,50 @@ kbd {
   letter-spacing: 0.08em;
 }
 
+.export-bounds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin: 0 3px 5px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-subtle);
+}
+
+.export-bounds__option {
+  min-height: 28px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 9.5px;
+  font-weight: 620;
+}
+
+.export-bounds__option:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.export-bounds__option[aria-pressed="true"] {
+  color: var(--accent-strong);
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(31, 45, 49, 0.12);
+}
+
+.export-bounds__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.export-bounds__note {
+  margin: 0 7px 7px;
+  color: var(--text-muted);
+  font-size: 8.5px;
+  line-height: 1.35;
+}
+
 .export-option {
   display: flex;
   width: 100%;

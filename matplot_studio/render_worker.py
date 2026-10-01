@@ -144,14 +144,33 @@ def _load_plot_module(source_path: Path) -> Any:
 
 
 def main() -> int:
-    if len(sys.argv) not in {6, 7}:
+    if len(sys.argv) < 6:
         return 2
     operation = sys.argv[1]
     output_format = sys.argv[2]
     source_path = Path(sys.argv[3]).resolve()
     output_path = Path(sys.argv[4]).resolve()
     result_path = Path(sys.argv[5]).resolve()
-    dpi_argument = sys.argv[6] if len(sys.argv) == 7 else None
+    bounds = "canvas"
+    dpi_argument = None
+    extra_arguments = sys.argv[6:]
+    option_index = 0
+    while option_index < len(extra_arguments):
+        option = extra_arguments[option_index]
+        if option == "--bounds" and option_index + 1 < len(extra_arguments):
+            bounds = extra_arguments[option_index + 1]
+            option_index += 2
+        elif option == "--dpi" and option_index + 1 < len(extra_arguments):
+            dpi_argument = extra_arguments[option_index + 1]
+            option_index += 2
+        elif len(extra_arguments) == 1 and option.isdecimal():
+            # Backward compatibility with the former positional DPI argument.
+            dpi_argument = option
+            option_index += 1
+        else:
+            return 2
+    if bounds not in {"canvas", "tight"}:
+        return 2
     captured_stdout = io.StringIO()
     captured_stderr = io.StringIO()
     try:
@@ -189,6 +208,8 @@ def main() -> int:
                 savefig_options = {"format": output_format}
                 if dpi is not None:
                     savefig_options["dpi"] = dpi
+                if bounds == "tight":
+                    savefig_options["bbox_inches"] = "tight"
                 figure.savefig(str(output_path), **savefig_options)
                 figure.clear()
             elif operation == "data":

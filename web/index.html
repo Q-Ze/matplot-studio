@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f5f7f8" />
     <title>Matplot Studio</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20260924-7" />
+    <link rel="stylesheet" href="./styles.css?v=20261001-1" />
   </head>
   <body>
     <div class="app" id="app">
@@ -107,6 +107,12 @@
                     <svg class="export-toggle__chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4" /></svg>
                   </button>
                   <div class="export-popover" id="imageExportPopover" role="menu" aria-label="选择图片格式" hidden>
+                    <div class="export-popover__heading">导出边界</div>
+                    <div class="export-bounds" role="group" aria-label="图片导出边界">
+                      <button class="export-bounds__option" id="imageBoundsCanvas" type="button" aria-pressed="true" data-image-bounds="canvas">保持画布</button>
+                      <button class="export-bounds__option" id="imageBoundsTight" type="button" aria-pressed="false" data-image-bounds="tight">紧裁切</button>
+                    </div>
+                    <p class="export-bounds__note" id="imageBoundsNote">保持设置的英寸尺寸，适合 PowerPoint。</p>
                     <div class="export-popover__heading">图片格式</div>
                     <button class="export-option" type="button" role="menuitem" data-export-kind="image" data-format="png">
                       <span class="export-format">PNG</span>
@@ -382,6 +388,6 @@
       </div>
     </template>
 
-    <script src="./app.js?v=20260924-7" defer></script>
+    <script src="./app.js?v=20261001-1" defer></script>
   </body>
 </html>

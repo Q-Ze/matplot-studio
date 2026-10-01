@@ -91,9 +91,12 @@ class Renderer:
         output_format: str,
         *,
         dpi: Optional[int] = None,
+        bounds: str = "canvas",
     ) -> RenderResult:
         if output_format not in {"png", "svg", "pdf"}:
             raise ValueError(f"不支持的图片格式：{output_format}")
+        if bounds not in {"canvas", "tight"}:
+            raise ValueError("图片导出边界必须是 canvas 或 tight")
         if dpi is not None:
             if isinstance(dpi, bool) or not isinstance(dpi, int) or not 36 <= dpi <= 600:
                 raise ValueError("PNG 导出 DPI 必须是 36 到 600 之间的整数")
@@ -105,6 +108,7 @@ class Renderer:
             operation="image",
             output_format=output_format,
             dpi=dpi,
+            bounds=bounds,
         )
 
     def export_data(self, source_path: Path, source: str, output_format: str) -> RenderResult:
@@ -120,6 +124,7 @@ class Renderer:
         operation: str,
         output_format: str,
         dpi: Optional[int] = None,
+        bounds: str = "canvas",
     ) -> RenderResult:
         started = time.monotonic()
         with tempfile.TemporaryDirectory(prefix="matplot-studio-render-") as temp_dir:
@@ -143,8 +148,10 @@ class Renderer:
                 str(artifact_path),
                 str(result_path),
             ]
+            if operation == "image":
+                worker_arguments.extend(["--bounds", bounds])
             if dpi is not None:
-                worker_arguments.append(str(dpi))
+                worker_arguments.extend(["--dpi", str(dpi)])
             process = subprocess.Popen(
                 worker_arguments,
                 cwd=str(source_path.parent),

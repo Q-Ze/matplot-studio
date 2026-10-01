@@ -31,6 +31,9 @@
     imageExportMenu: $("#imageExportMenu"),
     imageExportButton: $("#imageExportButton"),
     imageExportPopover: $("#imageExportPopover"),
+    imageBoundsCanvas: $("#imageBoundsCanvas"),
+    imageBoundsTight: $("#imageBoundsTight"),
+    imageBoundsNote: $("#imageBoundsNote"),
     dataExportMenu: $("#dataExportMenu"),
     dataExportButton: $("#dataExportButton"),
     dataExportPopover: $("#dataExportPopover"),
@@ -133,6 +136,7 @@
     loadingPlot: false,
     pendingSettings: 0,
     exporting: null,
+    imageExportBounds: readStorage("matplot.imageExportBounds", "canvas") === "tight" ? "tight" : "canvas",
     copyingPng: false,
     importing: false,
     importingLabel: null,
@@ -384,6 +388,17 @@
     };
   }
 
+  function setImageExportBounds(bounds) {
+    state.imageExportBounds = bounds === "tight" ? "tight" : "canvas";
+    writeStorage("matplot.imageExportBounds", state.imageExportBounds);
+    const tight = state.imageExportBounds === "tight";
+    dom.imageBoundsCanvas.setAttribute("aria-pressed", String(!tight));
+    dom.imageBoundsTight.setAttribute("aria-pressed", String(tight));
+    dom.imageBoundsNote.textContent = tight
+      ? "裁掉外围留白，更接近 bbox_inches=\"tight\"；实际尺寸会变化。"
+      : "保持设置的英寸尺寸，适合 PowerPoint。";
+  }
+
   function updateExportControls() {
     const available = Boolean(state.current && state.project && state.plot);
     const rendered = available
@@ -400,6 +415,9 @@
     dom.imageExportButton.disabled = !available || busy;
     dom.dataExportButton.disabled = !available || busy;
     imageOptions.forEach((option) => { option.disabled = !available || busy; });
+    [dom.imageBoundsCanvas, dom.imageBoundsTight].forEach((option) => {
+      option.disabled = !available || busy;
+    });
     dom.exportCsvOption.disabled = !available || busy || !policy.csv;
     dom.exportJsonOption.disabled = !available || busy || !policy.json;
     dom.exportCsvOption.title = !policy.csv ? (policy.note || "此图表不支持 CSV 数据导出") : "";
@@ -661,7 +679,9 @@
       const accept = kind === "image"
         ? { png: "image/png", svg: "image/svg+xml", pdf: "application/pdf" }[format]
         : { csv: "text/csv", json: "application/json" }[format];
-      const url = `${plotPath(projectId, plotId)}/export/${endpoint}?format=${encodeURIComponent(format)}`;
+      const parameters = new URLSearchParams({ format });
+      if (kind === "image") parameters.set("bounds", state.imageExportBounds);
+      const url = `${plotPath(projectId, plotId)}/export/${endpoint}?${parameters.toString()}`;
       const response = await fetch(url, { headers: { Accept: accept }, credentials: "same-origin" });
       if (!response.ok) {
         const contentType = response.headers.get("content-type") || "";
@@ -675,12 +695,14 @@
       }
       const blob = await response.blob();
       if (!blob.size) throw new ApiError("服务返回了空的导出文件。", 500);
-      const suffix = kind === "data" ? `-data.${format}` : `.${format}`;
+      const imageBoundsSuffix = state.imageExportBounds === "tight" ? "-tight" : "";
+      const suffix = kind === "data" ? `-data.${format}` : `${imageBoundsSuffix}.${format}`;
       const fallbackName = `${plotId}${suffix}`;
       const filename = filenameFromDisposition(response.headers.get("content-disposition"), fallbackName);
       triggerDownload(blob, filename);
       state.statusError = null;
-      showToast(`${format.toUpperCase()} 文件已开始下载`, "success", 2600);
+      const boundsLabel = kind === "image" && state.imageExportBounds === "tight" ? "紧裁切 " : "";
+      showToast(`${boundsLabel}${format.toUpperCase()} 文件已开始下载`, "success", 2600);
     } catch (error) {
       const message = friendlyError(error);
       reportStatusError("导出失败");
@@ -2870,6 +2892,8 @@
     bindExportMenu(dom.imageExportMenu);
     bindExportMenu(dom.dataExportMenu);
     dom.copyPngButton.addEventListener("click", copyPngToClipboard);
+    dom.imageBoundsCanvas.addEventListener("click", () => setImageExportBounds("canvas"));
+    dom.imageBoundsTight.addEventListener("click", () => setImageExportBounds("tight"));
     document.querySelectorAll(".export-option").forEach((option) => {
       option.addEventListener("click", () => downloadExport(option.dataset.exportKind, option.dataset.format));
     });
@@ -2994,6 +3018,7 @@
     bindEvents();
     bindCanvasEvents();
     bindEditorResizer();
+    setImageExportBounds(state.imageExportBounds);
     updateLineNumbers();
     updateExportControls();
     fetchProjects();
