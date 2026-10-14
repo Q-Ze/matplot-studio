@@ -20,3 +20,11 @@ jobs:
         run: python -m pip install -e .
       - name: Run tests
         run: python -m unittest discover -s tests -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check layout geometry and JavaScript
+        run: |
+          node --test tests/test_composition_geometry.cjs
+          node --check web/app.js
+          node --check web/composition.js

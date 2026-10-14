@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .contracts import ContractError, apply_settings_patch
+from .composition import Composition, CompositionStore, CompositionUpdate, render_composition
 from .rendering import RenderResult, Renderer
 from .storage import MAX_IMPORT_BODY_BYTES, PlotDocument, ProjectStore, StorageError
 
@@ -166,6 +167,7 @@ def create_app(
 
     store = ProjectStore(Path(configured_workspace))
     renderer = Renderer(timeout_seconds=max(0.1, float(render_timeout)))
+    compositions = CompositionStore(store)
     app = FastAPI(title="Matplot Studio", version="0.1.0")
     app.state.store = store
     app.state.renderer = renderer
@@ -428,6 +430,45 @@ def create_app(
                 "X-Content-Type-Options": "nosniff",
             },
         )
+
+    @app.get("/api/projects/{project}/compositions")
+    def list_compositions(project: str):
+        return {"compositions": compositions.list(project)}
+
+    @app.post("/api/projects/{project}/compositions", status_code=201)
+    def create_composition(project: str, layout: Composition):
+        return compositions.save(project, layout)
+
+    @app.post("/api/projects/{project}/compositions/preview")
+    def preview_composition(project: str, layout: Composition):
+        content = render_composition(store, renderer, project, layout)
+        return Response(content, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/projects/{project}/compositions/{composition}")
+    def get_composition(project: str, composition: str):
+        return compositions.read(project, composition)
+
+    @app.put("/api/projects/{project}/compositions/{composition}")
+    def update_composition(project: str, composition: str, update: CompositionUpdate):
+        return compositions.save(project, update.layout, composition, update.revision)
+
+    @app.delete("/api/projects/{project}/compositions/{composition}")
+    def delete_composition(project: str, composition: str, revision: str = Query(...)):
+        compositions.delete(project, composition, revision)
+        return {"deleted": composition}
+
+    @app.get("/api/projects/{project}/compositions/{composition}/export")
+    def export_composition(project: str, composition: str,
+                           format: Literal["svg", "pdf", "png"] = Query(default="pdf"),
+                           dpi: int = Query(default=300, ge=36, le=600),
+                           revision: Optional[str] = Query(default=None)):
+        saved = compositions.read(project, composition)
+        if revision is not None and revision != saved["revision"]:
+            raise StorageError("revision_conflict", "拼图已被更新，请重新打开后再导出", status_code=409)
+        content = render_composition(store, renderer, project, Composition.model_validate(saved["layout"]), format, dpi)
+        return Response(content, media_type={"svg": "image/svg+xml", "pdf": "application/pdf", "png": "image/png"}[format],
+                        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                                 "Content-Disposition": f'attachment; filename="figure-{composition}.{format}"'})
 
     app.mount("/", StaticFiles(directory=str(configured_web), html=True, check_dir=False), name="web")
     return app

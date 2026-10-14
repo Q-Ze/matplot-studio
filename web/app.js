@@ -22,6 +22,7 @@
     refreshProjectsButton: $("#refreshProjectsButton"),
     importProjectButton: $("#importProjectButton"),
     newProjectButton: $("#newProjectButton"),
+    compositionButton: $("#compositionButton"),
     breadcrumbProject: $("#breadcrumbProject"),
     breadcrumbPlot: $("#breadcrumbPlot"),
     globalStatus: $("#globalStatus"),
@@ -1069,6 +1070,8 @@
 
   function updateTreeActionAvailability() {
     const disabled = workspaceMutationBusy();
+    dom.compositionButton.disabled = disabled || !state.project;
+    dom.compositionButton.title = state.project ? `为“${state.project.name}”创建科研拼图` : "请先选择项目中的图表";
     if (dom.importProjectButton) dom.importProjectButton.disabled = disabled;
     if (dom.newProjectButton) dom.newProjectButton.disabled = disabled;
     dom.projectTree?.querySelectorAll("[data-tree-mutation]").forEach((button) => {
@@ -2897,6 +2900,14 @@
   }
 
   function bindEvents() {
+    dom.compositionButton.addEventListener("click", async () => {
+      if (!state.project || rejectBusyAction("打开拼图")) return;
+      const project = state.project;
+      if (state.dirty && !(await saveCode({ render: false }))) return;
+      await state.patchChain;
+      closeMobilePanels();
+      await window.CompositionEditor.open(project);
+    });
     bindExportMenu(dom.imageExportMenu);
     bindExportMenu(dom.dataExportMenu);
     dom.copyPngButton.addEventListener("click", copyPngToClipboard);

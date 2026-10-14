@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f5f7f8" />
     <title>Matplot Studio</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20261001-1" />
+    <link rel="stylesheet" href="./styles.css?v=20261014-2" />
   </head>
   <body>
     <div class="app" id="app">
@@ -36,6 +36,10 @@
             <span id="globalStatusText">正在连接</span>
           </div>
           <span class="shortcut-hint"><kbd>Ctrl</kbd><span>/</span><kbd>⌘</kbd><span>+</span><kbd>Enter</kbd></span>
+          <button class="button button--quiet" id="compositionButton" type="button" disabled title="为当前项目创建科研拼图">
+            <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M3 3h6v6H3ZM12 3h5v6h-5ZM3 12h6v5H3ZM12 12h5v5h-5Z" /></svg>
+            <span>科研拼图</span>
+          </button>
           <button class="button button--primary" id="renderButton" type="button" disabled>
             <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M6.5 4.6v10.8l8-5.4-8-5.4Z" /></svg>
             <span>运行并渲染</span>
@@ -388,6 +392,8 @@
       </div>
     </template>
 
-    <script src="./app.js?v=20261001-2" defer></script>
+    <script src="./composition-geometry.js?v=20261014-2" defer></script>
+    <script src="./composition.js?v=20261014-2" defer></script>
+    <script src="./app.js?v=20261014-2" defer></script>
   </body>
 </html>

@@ -14,6 +14,7 @@ dependencies = [
   "numpy>=1.26",
   "pandas>=2.3.3",
   "pydantic>=2.4",
+  "pymupdf>=1.24",
   "scipy>=1.13.1",
   "uvicorn>=0.29",
 ]
