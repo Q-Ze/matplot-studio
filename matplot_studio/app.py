@@ -43,6 +43,18 @@ class SettingOperation(BaseModel):
     value: Any = None
 
 
+class ProjectRename(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    expected_name: str
+
+
+class PlotRename(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    revision: str = Field(min_length=1)
+
+
 class SettingsPatch(BaseModel):
     """Accept batch operations as well as the convenient set/unset maps."""
 
@@ -234,6 +246,14 @@ def create_app(
     @app.delete("/api/projects/{project}")
     def delete_project(project: str) -> Dict[str, Any]:
         return {"deleted": store.delete_project(project)}
+
+    @app.patch("/api/projects/{project}/name")
+    def rename_project(project: str, item: ProjectRename) -> Dict[str, Any]:
+        return {"project": store.rename_project(project, item.name, item.expected_name)}
+
+    @app.patch("/api/projects/{project}/plots/{plot}/name")
+    def rename_plot(project: str, plot: str, item: PlotRename) -> Dict[str, Any]:
+        return _plot_payload(store.rename_plot(project, plot, item.name, item.revision))
 
     @app.post("/api/projects/{project}/plots/import", status_code=201)
     async def import_plots(project: str, request: Request) -> Dict[str, Any]:

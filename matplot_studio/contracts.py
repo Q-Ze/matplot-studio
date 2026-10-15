@@ -285,6 +285,23 @@ def validate_setting_value(schema: Sequence[Mapping[str, Any]], path: str, value
     _validate_value(path, str(item["type"]), value, item)
 
 
+def rename_plot_source(source: str, name: str) -> str:
+    """Replace only the effective PLOT_META.name literal, retaining other source text."""
+    validate_plot_source(source)
+    _, assignment = _literal_assignment(ast.parse(source), "PLOT_META")
+    metadata = _assignment_value(assignment)
+    values = [value for key, value in zip(metadata.keys, metadata.values)
+              if isinstance(key, ast.Constant) and key.value == "name"]
+    node = values[-1]
+    lines = source.encode("utf-8").splitlines(keepends=True)
+    start = sum(map(len, lines[:node.lineno - 1])) + node.col_offset
+    end = sum(map(len, lines[:node.end_lineno - 1])) + node.end_col_offset
+    encoded = source.encode("utf-8")
+    updated = (encoded[:start] + repr(name).encode("utf-8") + encoded[end:]).decode("utf-8")
+    validate_plot_source(updated)
+    return updated
+
+
 def apply_settings_patch(
     source: str,
     *,

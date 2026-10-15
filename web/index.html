@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f5f7f8" />
     <title>Matplot Studio</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20261014-4" />
+    <link rel="stylesheet" href="./styles.css?v=20261015-2" />
   </head>
   <body>
     <div class="app" id="app">
@@ -365,6 +365,18 @@
       </form>
     </dialog>
 
+    <dialog class="modal" id="renameDialog" aria-labelledby="renameTitle">
+      <form method="dialog" id="renameForm">
+        <div class="modal__heading">
+          <h2 id="renameTitle">重命名</h2>
+          <button class="icon-button icon-button--subtle" value="cancel" formnovalidate aria-label="关闭重命名">×</button>
+        </div>
+        <label class="form-field"><span>新名称</span><input id="renameName" name="name" required maxlength="200" autocomplete="off" /></label>
+        <p class="form-error" id="renameError" role="alert" hidden></p>
+        <div class="modal__actions"><button class="button button--quiet" value="cancel" formnovalidate>取消</button><button class="button button--primary" value="default">保存名称</button></div>
+      </form>
+    </dialog>
+
     <dialog class="modal modal--danger" id="deleteEntityDialog" aria-labelledby="deleteEntityTitle" aria-describedby="deleteEntityDescription">
       <form method="dialog" id="deleteEntityForm">
         <div class="modal__heading">
@@ -395,6 +407,6 @@
     <script src="./composition-geometry.js?v=20261014-4" defer></script>
     <script src="./composition-clipboard.js?v=20261014-5" defer></script>
     <script src="./composition.js?v=20261015-1" defer></script>
-    <script src="./app.js?v=20261014-4" defer></script>
+    <script src="./app.js?v=20261015-2" defer></script>
   </body>
 </html>

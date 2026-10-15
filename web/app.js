@@ -108,6 +108,11 @@
     newPlotName: $("#newPlotName"),
     createPlotError: $("#createPlotError"),
     confirmCreatePlot: $("#confirmCreatePlot"),
+    renameDialog: $("#renameDialog"),
+    renameForm: $("#renameForm"),
+    renameTitle: $("#renameTitle"),
+    renameName: $("#renameName"),
+    renameError: $("#renameError"),
     deleteEntityDialog: $("#deleteEntityDialog"),
     deleteEntityForm: $("#deleteEntityForm"),
     deleteEntityKindLabel: $("#deleteEntityKindLabel"),
@@ -142,6 +147,8 @@
     importing: false,
     importingLabel: null,
     deleting: false,
+    renaming: false,
+    renameTarget: null,
     codeVersion: 0,
     autosaveTimer: null,
     propertyTimers: new Map(),
@@ -318,6 +325,10 @@
     }
     if (state.deleting) {
       setGlobalStatus("正在删除", "busy");
+      return;
+    }
+    if (state.renaming) {
+      setGlobalStatus("正在保存名称", "busy");
       return;
     }
     if (state.importing) {
@@ -1059,6 +1070,7 @@
   function workspaceMutationBusy({ includeScheduledProperties = true } = {}) {
     return state.importing
       || state.deleting
+      || state.renaming
       || state.loadingPlot
       || state.saving
       || state.rendering
@@ -1148,7 +1160,7 @@
       deleteProject.addEventListener("click", () => openDeleteDialog({ type: "project", project }));
 
       const projectActions = element("div", "tree-project__actions");
-      projectActions.append(importPlots, addPlot, deleteProject);
+      projectActions.append(renameButton({ type: "project", project }), importPlots, addPlot, deleteProject);
       row.append(toggle, projectActions);
       wrapper.append(row);
 
@@ -1173,7 +1185,7 @@
         deletePlot.setAttribute("aria-label", `删除图表“${plot.name}”`);
         deletePlot.append(icon("M6 6h8M8 6V4h4v2M7 8v7M10 8v7M13 8v7M5 6l1 11h8l1-11"));
         deletePlot.addEventListener("click", () => openDeleteDialog({ type: "plot", project, plot }));
-        plotRow.append(button, deletePlot);
+        plotRow.append(button, renameButton({ type: "plot", project, plot }), deletePlot);
         plots.append(plotRow);
       });
       wrapper.append(plots);
@@ -2211,7 +2223,7 @@
   }
 
   function resumeAutosaveIfNeeded() {
-    if (!state.dirty || !state.current || !dom.autoRenderToggle.checked || state.importing || state.deleting) return;
+    if (!state.dirty || !state.current || !dom.autoRenderToggle.checked || state.importing || state.deleting || dom.renameDialog.open) return;
     clearTimeout(state.autosaveTimer);
     state.autosaveTimer = window.setTimeout(() => runAndRender({ source: "auto" }), AUTOSAVE_DELAY);
   }
@@ -2683,6 +2695,94 @@
     if (resolver) resolver(confirmed);
   }
 
+  function renameButton(target) {
+    const button = element("button", "tree-rename");
+    const name = target.type === "project" ? target.project.name : target.plot.name;
+    button.type = "button";
+    button.dataset.treeMutation = "true";
+    button.title = `重命名${target.type === "project" ? "项目" : "图表"}“${name}”`;
+    button.setAttribute("aria-label", button.title);
+    button.append(icon("m12 4 4 4M4 16l4-1L17 6l-3-3-9 9-1 4Z"));
+    button.addEventListener("click", () => openRenameDialog(target));
+    return button;
+  }
+
+  function openRenameDialog(target) {
+    if (rejectBusyAction("重命名")) return;
+    const name = target.type === "project" ? target.project.name : target.plot.name;
+    state.renameTarget = { ...target, originalName: name };
+    clearTimeout(state.autosaveTimer);
+    dom.renameTitle.textContent = target.type === "project" ? "重命名项目" : "重命名图表";
+    dom.renameName.value = name;
+    dom.renameError.hidden = true;
+    dom.renameDialog.showModal();
+    dom.renameName.focus();
+    dom.renameName.select();
+  }
+
+  async function submitRename(event) {
+    event.preventDefault();
+    if (state.renaming) return;
+    if (event.submitter?.value === "cancel") { dom.renameDialog.close(); return; }
+    if (!dom.renameForm.reportValidity() || !state.renameTarget) return;
+    const name = dom.renameName.value.trim();
+    if (!name) { dom.renameError.textContent = "名称不能为空"; dom.renameError.hidden = false; return; }
+    const target = state.renameTarget;
+    if (name === target.originalName) { dom.renameDialog.close(); return; }
+    if (rejectBusyAction("重命名")) return;
+    const isPlot = target.type === "plot";
+    const currentPlot = isPlot && state.project?.id === target.project.id && state.plot?.id === target.plot.id;
+    state.renaming = true;
+    dom.renameForm.querySelectorAll("button, input").forEach((control) => { control.disabled = true; });
+    dom.renameForm.setAttribute("aria-busy", "true");
+    dom.renameError.hidden = true;
+    updateActivityStatus();
+    try {
+      if (currentPlot && state.dirty && !(await saveCode({ render: false }))) {
+        throw new Error("当前代码未能保存，请先修复代码后再重命名；原有修改已保留。");
+      }
+      const endpoint = isPlot ? `${plotPath(target.project.id, target.plot.id)}/name`
+        : `${API_ROOT}/projects/${encodeSegment(target.project.id)}/name`;
+      const result = await apiRequest(endpoint, { method: "PATCH", body: JSON.stringify(isPlot
+        ? { name, revision: currentPlot ? state.revision : target.plot.raw?.revision }
+        : { name, expected_name: target.originalName }) });
+      for (const project of new Set([...state.projects, state.project, target.project])) {
+        if (project?.id !== target.project.id) continue;
+        if (!isPlot) {
+          project.name = result.project.name;
+          project.raw.name = result.project.name;
+        } else {
+          for (const plot of new Set([...project.plots, currentPlot ? state.plot : null, target.plot])) {
+            if (plot?.id !== target.plot.id) continue;
+            plot.name = result.meta.name;
+            Object.assign(plot.raw, result.meta, { revision: result.revision });
+          }
+        }
+      }
+      if (currentPlot) {
+        const start = dom.codeInput.selectionStart, end = dom.codeInput.selectionEnd;
+        state.current = { ...state.current, ...result, render_url: result.svg_url };
+        state.revision = result.revision;
+        state.codeVersion += 1;
+        dom.codeInput.value = result.code;
+        dom.codeInput.setSelectionRange(start, end);
+        updateLineNumbers(); updateCursorPosition(); updateExportControls();
+      }
+      updateSelectionUI();
+      clearStatusError();
+      showToast(`已重命名为“${name}”`, "success");
+      dom.renameDialog.close();
+    } catch (error) {
+      dom.renameError.textContent = friendlyError(error);
+      dom.renameError.hidden = false;
+    } finally {
+      state.renaming = false;
+      dom.renameForm.querySelectorAll("button, input").forEach((control) => { control.disabled = false; });
+      dom.renameForm.removeAttribute("aria-busy");
+      updateActivityStatus();
+    }
+  }
+
   function openCreateProjectDialog() {
     if (rejectBusyAction("新建项目")) return;
     dom.newProjectName.value = "";
@@ -2961,6 +3061,9 @@
     });
     dom.importPlotDialog.addEventListener("close", resetPlotImportDialog);
     dom.deleteEntityForm.addEventListener("submit", submitDeleteEntity);
+    dom.renameForm.addEventListener("submit", submitRename);
+    dom.renameDialog.addEventListener("cancel", (event) => { if (state.renaming) event.preventDefault(); });
+    dom.renameDialog.addEventListener("close", () => { state.renameTarget = null; resumeAutosaveIfNeeded(); });
     dom.deleteEntityDialog.addEventListener("cancel", (event) => {
       event.preventDefault();
       if (!state.deleting) dom.deleteEntityDialog.close("cancel");

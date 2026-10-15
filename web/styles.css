@@ -649,6 +649,7 @@ kbd {
 .tree-project__add,
 .tree-project__import,
 .tree-project__delete,
+.tree-rename,
 .tree-plot__delete {
   display: grid;
   width: 26px;
@@ -664,12 +665,15 @@ kbd {
 
 .tree-project__row:hover .tree-project__actions > button,
 .tree-project__row:focus-within .tree-project__actions > button,
+.tree-plot__row:hover .tree-rename,
+.tree-plot__row:focus-within .tree-rename,
 .tree-plot__row:hover .tree-plot__delete,
 .tree-plot__row:focus-within .tree-plot__delete {
   opacity: 1;
 }
 
 .tree-project__add:hover,
+.tree-rename:hover,
 .tree-project__import:hover {
   color: var(--accent);
   background: var(--accent-soft);
@@ -684,12 +688,14 @@ kbd {
 .tree-project__add svg,
 .tree-project__import svg,
 .tree-project__delete svg,
+.tree-rename svg,
 .tree-plot__delete svg {
   width: 14px;
   height: 14px;
 }
 
 .tree-project__actions > button:disabled,
+.tree-rename:disabled,
 .tree-plot__delete:disabled {
   cursor: default;
   opacity: 0.28;
@@ -2698,6 +2704,7 @@ kbd {
 
 @media (hover: none), (max-width: 960px) {
   .tree-project__actions > button,
+  .tree-rename,
   .tree-plot__delete {
     opacity: 1;
   }
@@ -2705,6 +2712,7 @@ kbd {
   .tree-project__add,
   .tree-project__import,
   .tree-project__delete,
+  .tree-rename,
   .tree-plot__delete {
     width: 30px;
     height: 30px;

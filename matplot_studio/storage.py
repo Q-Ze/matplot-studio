@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from .contracts import ContractError, PlotContract, validate_plot_source
+from .contracts import ContractError, PlotContract, rename_plot_source, validate_plot_source
 
 
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -690,6 +690,44 @@ class ProjectStore:
                 if staging_path is not None:
                     shutil.rmtree(staging_path, ignore_errors=True)
             return summaries
+
+    def rename_project(self, project: str, name: str, expected_name: str) -> Dict[str, Any]:
+        name = self._validate_display_text(name, "项目名称")
+        with self._lock:
+            path = self.project_path(project)
+            manifest = self._load_project_meta(path)
+            if manifest.get("name", project) != expected_name:
+                raise StorageError("revision_conflict", "项目名称已更新，请刷新后重试", status_code=409)
+            manifest["name"] = name
+            self._atomic_write(path / "project.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+            return manifest
+
+    def rename_plot(self, project: str, plot: str, name: str, expected_revision: str) -> PlotDocument:
+        name = self._validate_display_text(name, "图表名称")
+        with self._lock:
+            current = self.read_plot(project, plot)
+            if current.revision != expected_revision:
+                raise StorageError("revision_conflict", "图表已更新，请重新载入后重命名", status_code=409)
+            source = rename_plot_source(current.code, name)
+            project_path = self.project_path(project)
+            manifest = self._load_project_meta(project_path)
+            items = manifest.get("plots", [])
+            if not isinstance(items, list):
+                raise StorageError("invalid_project", "project.json.plots 必须是数组", status_code=500)
+            matching = [item for item in items if isinstance(item, dict) and item.get("id") == plot]
+            if matching:
+                for item in matching:
+                    item["name"] = name
+            else:
+                items.append({"id": plot, "name": name, "description": current.contract.meta.get("description", "")})
+            manifest["plots"] = items
+            self._atomic_write(current.path, source)
+            try:
+                self._atomic_write(project_path / "project.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+            except Exception:
+                self._atomic_write(current.path, current.code)
+                raise
+            return self.read_plot(project, plot)
 
     def delete_project(self, project: str) -> Dict[str, Any]:
         """Remove a project after atomically moving it out of the visible workspace."""
