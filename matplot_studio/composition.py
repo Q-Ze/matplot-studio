@@ -42,6 +42,7 @@ class Composition(BaseModel):
     margin_mm: float = Field(default=4, ge=0, le=40)
     gap_mm: float = Field(default=3, ge=0, le=40)
     row_width_ratios: list[list[Annotated[float, Field(gt=0, le=1000)]]] = Field(default_factory=list, max_length=6)
+    row_height_ratios: list[Annotated[float, Field(gt=0, le=1000)]] = Field(default_factory=list, max_length=6)
     labels: Literal["lower", "upper", "parentheses", "custom", "none"] = "lower"
     label_size: float = Field(default=10, ge=6, le=24)
     source_bounds: Literal["canvas", "tight"] = "tight"
@@ -58,6 +59,10 @@ class Composition(BaseModel):
             raise ValueError("每行的宽度比例数量必须与列数一致，比例行数必须与行数一致")
         if any(width < 8 for row in range(1, self.rows + 1) for width in self.column_widths(row)):
             raise ValueError("宽度比例使部分区域小于 8 mm，请调整比例或增加画布宽度")
+        if self.row_height_ratios and len(self.row_height_ratios) != self.rows:
+            raise ValueError("行高比例的数量必须与行数一致")
+        if any(height < 8 for height in self.row_heights()):
+            raise ValueError("行高比例使部分区域小于 8 mm，请调整比例或增加画布高度")
         occupied = set()
         for panel in self.panels:
             if panel.row + panel.rowspan - 1 > self.rows or panel.column + panel.colspan - 1 > self.columns:
@@ -82,11 +87,16 @@ class Composition(BaseModel):
 
     def panel_box(self, panel):
         widths = self.column_widths(panel.row)
-        row_height = (self.height_mm - 2 * self.margin_mm - (self.rows - 1) * self.gap_mm) / self.rows
+        heights = self.row_heights()
         return (self.margin_mm + sum(widths[:panel.column - 1]) + (panel.column - 1) * self.gap_mm,
-                self.margin_mm + (panel.row - 1) * (row_height + self.gap_mm),
+                self.margin_mm + sum(heights[:panel.row - 1]) + (panel.row - 1) * self.gap_mm,
                 sum(widths[panel.column - 1:panel.column - 1 + panel.colspan]) + (panel.colspan - 1) * self.gap_mm,
-                row_height * panel.rowspan + (panel.rowspan - 1) * self.gap_mm)
+                sum(heights[panel.row - 1:panel.row - 1 + panel.rowspan]) + (panel.rowspan - 1) * self.gap_mm)
+
+    def row_heights(self):
+        ratios = self.row_height_ratios or [1] * self.rows
+        available = self.height_mm - 2 * self.margin_mm - (self.rows - 1) * self.gap_mm
+        return [available * value / sum(ratios) for value in ratios]
 
     def panel_label(self, index):
         if self.labels == "none":

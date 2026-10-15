@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { panelBox, fittedHeight, imageBox, rowWidths, parseWidthRatios, validateWidths } = require("../web/composition-geometry.js");
+const { panelBox, fittedHeight, imageBox, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = require("../web/composition-geometry.js");
 
 const base = { width_mm: 180, height_mm: 140, rows: 2, columns: 2,
   margin_mm: 4, gap_mm: 3, labels: "lower", label_size: 10,
@@ -17,6 +17,29 @@ test("5:4:3 splits 120 mm into 50, 40, 30 mm with equal-height regions", () => {
   assert.deepEqual(rowWidths(inset, 1), [50, 40, 30]);
   assert.equal(panelBox(inset, inset.panels[2]).x, 100);
   assert.deepEqual(imageBox({width:50,height:30},1), {x:10,y:0,width:30,height:30});
+});
+
+test("2:1 row heights compose with independent widths, margins and spanning", () => {
+  const layout = { ...base, width_mm:134, height_mm:101, rows:2, columns:3,
+    row_height_ratios:[2,1], row_width_ratios:[[5,4,3],[1,1,1]] };
+  assert.deepEqual(rowHeights(layout),[60,30]);
+  assert.deepEqual(panelBox(layout,{row:1,column:2,rowspan:1,colspan:1}),{x:57,y:4,width:40,height:60});
+  assert.deepEqual(panelBox(layout,{row:2,column:2,rowspan:1,colspan:1}),{x:47,y:67,width:40,height:30});
+  assert.deepEqual(panelBox(layout,{row:1,column:1,rowspan:2,colspan:3}),{x:4,y:4,width:126,height:93});
+});
+
+test("automatic height fitting preserves row ratios and contains every source", () => {
+  const layout = {...base, width_mm:100, rows:3, columns:1, row_height_ratios:[2,1,3],
+    panels:[{row:1,column:1,rowspan:2,colspan:1},{row:3,column:1,rowspan:1,colspan:1}]};
+  const before = JSON.stringify(layout);
+  const fitted = {...layout,height_mm:fittedHeight(layout,[2,1])};
+  const heights = rowHeights(fitted);
+  assert.ok(Math.abs(heights[0]/heights[1]-2)<1e-9);
+  assert.ok(Math.abs(heights[2]/heights[1]-3)<1e-9);
+  layout.panels.forEach((panel,index)=>assert.ok(panelBox(fitted,panel).height >= panelBox(fitted,panel).width / [2,1][index]));
+  assert.equal(JSON.stringify(layout), before);
+  assert.throws(()=>validateHeights({...base,row_height_ratios:[100,1]}),/8 mm/);
+  assert.throws(()=>parseWidthRatios('2:1',0),/行列数/);
 });
 
 test("rows have independent ratios and spanning panels require aligned boundaries", () => {

@@ -86,6 +86,37 @@ class CompositionTests(unittest.TestCase):
         restored = Composition.model_validate(legacy)
         self.assertEqual(restored.column_widths(1), [84.5,84.5])
 
+    def test_row_height_ratios_persist_and_export_exact_heights(self):
+        panels = []
+        for row, height in enumerate([60,30],1):
+            svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="60" height="{height}"><rect width="60" height="{height}" fill="#3388aa"/></svg>'
+            image = CompositionImages(self.store).import_image(self.project,f"row-{row}.svg",svg.encode())
+            panels.append({"image":image["id"],"row":row,"column":1})
+        layout = Composition(name="Rows 2:1",width_mm=68,height_mm=101,margin_mm=4,gap_mm=3,
+                             rows=2,columns=1,row_height_ratios=[2,1],panels=panels,labels="none")
+        self.assertEqual(layout.row_heights(),[60,30])
+        self.assertEqual([layout.panel_box(panel) for panel in layout.panels],[(4,4,60,60),(4,67,60,30)])
+        saved = self.saved.save(self.project,layout)
+        restored = Composition.model_validate(self.saved.read(self.project,saved["id"])["layout"])
+        self.assertEqual(restored.row_height_ratios,[2,1])
+        with pymupdf.open(stream=render_composition(self.store,Mock(),self.project,restored,"pdf"),filetype="pdf") as document:
+            rectangles = [drawing["rect"] for drawing in document[0].get_drawings()]
+            self.assertEqual(len(rectangles),2)
+            for rect,(y,height) in zip(rectangles,[(4,60),(67,30)]):
+                self.assertAlmostEqual(rect.y0*25.4/72,y,places=3)
+                self.assertAlmostEqual(rect.height*25.4/72,height,places=3)
+            self.assertFalse(document[0].get_images())
+        self.assertIn(b"<path",render_composition(self.store,Mock(),self.project,restored,"svg"))
+        self.assertTrue(render_composition(self.store,Mock(),self.project,restored,"png",72).startswith(b"\x89PNG"))
+
+    def test_invalid_row_heights_and_legacy_equal_rows(self):
+        data = self.layout.model_dump()
+        for ratios in ([2], [2,1,3], [0,1], [-1,1], [float("nan"),1], [float("inf"),1], [100,1], [1001,1001]):
+            with self.subTest(ratios=ratios), self.assertRaises(ValidationError):
+                Composition.model_validate({**data,"row_height_ratios":ratios})
+        del data["row_height_ratios"]
+        self.assertEqual(Composition.model_validate(data).row_heights(),[64.5,64.5])
+
     def test_rejects_overlap_overflow_nonfinite_and_unusable_dimensions(self):
         cases = [
             {"panels": [{"plot": self.plot.plot, "row": 1, "column": 1}] * 2},

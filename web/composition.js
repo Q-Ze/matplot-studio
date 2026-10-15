@@ -28,8 +28,9 @@
           <label class="form-field"><span>格间距 · mm</span><input data-field="gap_mm" type="number" min="0" max="40" step="0.5" required></label>
         </div>
         <section class="composition-ratios" aria-label="每行宽度比例">
+          <label class="form-field"><span>行高比例（从上到下）</span><input id="compositionHeightRatios" data-ratio-row="height" type="text" required aria-label="行高比例"><small id="compositionHeightSummary"></small></label>
           <div id="compositionWidthRatios"></div>
-          <p class="composition-hint">从左到右填写比例，如 5:4:3。先扣除边距和间距，再按比例分配宽度。同一行区域等高，原图等比缩放、允许留白。</p>
+          <p class="composition-hint">行高从上到下填写，如 2:1；每行宽度从左到右填写，如 5:4:3。先扣除边距和间距，再按比例分配。同一行区域等高，原图等比缩放、允许留白。</p>
         </section>
         <div class="composition-pair">
           <label class="form-field"><span>子图标注</span><select data-field="labels"><option value="lower">a, b, c</option><option value="upper">A, B, C</option><option value="parentheses">(a), (b), (c)</option><option value="custom">自定义</option><option value="none">不显示</option></select></label>
@@ -68,10 +69,10 @@
   let mode = "edit", thumbnailSession = 0, thumbnailQueue = Promise.resolve();
   const thumbnails = new Map();
   let importedImages = [];
-  const { panelBox, fittedHeight, imageBox, rowWidths, parseWidthRatios, validateWidths } = window.CompositionGeometry;
+  const { panelBox, fittedHeight, imageBox, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = window.CompositionGeometry;
   const clipboard = window.CompositionClipboard;
   const defaults = () => ({ name: "Figure 1", width_mm: 180, height_mm: 140, rows: 2, columns: 2,
-    margin_mm: 4, gap_mm: 3, row_width_ratios: [], labels: "lower", label_size: 10, source_bounds: "tight", panels: [] });
+    margin_mm: 4, gap_mm: 3, row_width_ratios: [], row_height_ratios: [], labels: "lower", label_size: 10, source_bounds: "tight", panels: [] });
   const baseUrl = () => `/api/projects/${encodeURIComponent(project.id)}/compositions`;
   const imagesUrl = () => `/api/projects/${encodeURIComponent(project.id)}/composition-images`;
   const sourceKey = (panel) => panel.image ? `image:${panel.image}` : `plot:${panel.plot}`;
@@ -250,6 +251,9 @@
     });
   }
   function updateWidthSummaries() {
+    const heights = rowHeights(layout);
+    $("#compositionHeightSummary").textContent = heights.every((height) => Number.isFinite(height) && height > 0)
+      ? `${heights.map((height) => Number(height.toFixed(2))).join(" / ")} mm` : "请检查画布尺寸";
     dialog.querySelectorAll("[data-width-summary]").forEach((summary) => {
       const widths = rowWidths(layout, Number(summary.dataset.widthSummary));
       summary.textContent = widths.every((width) => Number.isFinite(width) && width > 0)
@@ -284,7 +288,27 @@
     }
     updateWidthSummaries();
   }
+  function renderHeightRatios() {
+    const rows = Math.max(1, Math.min(6, Math.trunc(layout.rows) || 1));
+    const input = $("#compositionHeightRatios");
+    input.value = (layout.row_height_ratios?.length ? layout.row_height_ratios : Array(rows).fill(1)).join(":");
+    input.placeholder = rows === 2 ? "2:1" : Array(rows).fill(1).join(":");
+    input.setCustomValidity("");
+  }
+  $("#compositionHeightRatios").addEventListener("input", (event) => {
+    const input = event.target;
+    try {
+      layout.row_height_ratios = parseWidthRatios(input.value, layout.rows);
+      input.setCustomValidity(""); invalidate();
+      try { validateHeights(layout); } catch (error) { status(error.message, true); }
+    } catch (error) {
+      input.setCustomValidity(error.message); invalidate(); status(error.message, true);
+    }
+  });
   function resizeWidthRatios() {
+    if (layout.row_height_ratios?.length && Number.isInteger(layout.rows) && layout.rows >= 1 && layout.rows <= 6) {
+      layout.row_height_ratios = Array.from({ length: layout.rows }, (_, row) => layout.row_height_ratios[row] ?? 1);
+    }
     if (layout.row_width_ratios?.length && Number.isInteger(layout.rows) && layout.rows >= 1 && layout.rows <= 6 &&
         Number.isInteger(layout.columns) && layout.columns >= 1 && layout.columns <= 6) {
       layout.row_width_ratios = Array.from({ length: layout.rows }, (_, row) =>
@@ -292,7 +316,7 @@
     }
   }
   function populate() {
-    resizeWidthRatios(); renderWidthRatios();
+    resizeWidthRatios(); renderWidthRatios(); renderHeightRatios();
     fields.forEach((field) => { field.value = layout[field.dataset.field]; });
     renderPanels(); invalidate();
     $('[data-action="delete"]').hidden = !current;
@@ -303,7 +327,7 @@
     saved.forEach((item) => { const option = node("option", item.layout.name); option.value = item.id; select.append(option); });
     select.value = current?.id || "";
   }
-  function validate() {
+  function validate({ fitHeight = false } = {}) {
     for (const field of dialog.querySelectorAll("input")) if (!field.reportValidity()) throw new Error("请检查输入值");
     if (!layout.name.trim()) throw new Error("请输入拼图名称");
     if (!layout.panels.length) throw new Error("请至少添加一张子图");
@@ -315,6 +339,7 @@
       }
     }
     validateWidths(layout);
+    if (!fitHeight) validateHeights(layout);
   }
   async function save() {
     validate();
@@ -331,7 +356,8 @@
   }
   async function run(action, validateLayout = false) {
     if (busy) return;
-    try { if (validateLayout) validate(); } catch (error) { status(error.message, true); return; }
+    try { if (validateLayout) typeof validateLayout === "function" ? validateLayout() : validate(); }
+    catch (error) { status(error.message, true); return; }
     busy = true;
     const controls = [...dialog.querySelectorAll("button, input, select")];
     const disabled = controls.map((control) => control.disabled);
@@ -407,6 +433,7 @@
   fields.forEach((field) => field.addEventListener("input", () => {
     layout[field.dataset.field] = field.type === "number" ? Number(field.value) : field.value;
     if (["rows", "columns"].includes(field.dataset.field)) { resizeWidthRatios(); renderWidthRatios(); }
+    if (field.dataset.field === "rows") renderHeightRatios();
     if (field.dataset.field === "labels") renderPanels(); invalidate();
   }));
   $("#compositionSaved").addEventListener("change", () => {
@@ -443,14 +470,14 @@
     if (action === "preview") run(preview, true);
     if (action === "refresh") { clearThumbnails(); invalidate(); }
     if (action === "fit") run(async () => {
-      validate(); status("正在读取原图比例并适配高度…");
+      status("正在读取原图比例并适配高度…");
       const sources = await Promise.all(layout.panels.map((panel) => thumbnail(panel).promise));
       const failed = sources.find((source) => source.state !== "ready");
       if (failed) throw new Error(failed.error || "原图载入失败，请刷新原图后重试");
       layout.height_mm = fittedHeight(layout, sources.map((source) => source.ratio));
       fields.find((field) => field.dataset.field === "height_mm").value = layout.height_mm;
-      invalidate(); status(`已按原图比例适配为 ${layout.width_mm} × ${layout.height_mm} mm，宽度和网格保持不变`);
-    }, true);
+      invalidate(); status(`已按原图比例适配为 ${layout.width_mm} × ${layout.height_mm} mm，行高比例保持不变`);
+    }, () => validate({ fitHeight: true }));
     if (action === "delete" && current && window.confirm(`确定删除拼图“${current.layout.name}”吗？原图会保留。`)) run(async () => {
       await request(`${baseUrl()}/${current.id}?revision=${current.revision}`, { method: "DELETE" });
       saved = saved.filter((item) => item.id !== current.id); current = null; layout = defaults(); baseline = JSON.stringify(layout); savedOptions(); populate(); status("拼图已删除");
