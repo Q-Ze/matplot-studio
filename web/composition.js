@@ -27,6 +27,10 @@
           <label class="form-field"><span>外边距 · mm</span><input data-field="margin_mm" type="number" min="0" max="40" step="0.5" required></label>
           <label class="form-field"><span>格间距 · mm</span><input data-field="gap_mm" type="number" min="0" max="40" step="0.5" required></label>
         </div>
+        <section class="composition-ratios" aria-label="每行宽度比例">
+          <div id="compositionWidthRatios"></div>
+          <p class="composition-hint">从左到右填写比例，如 5:4:3。先扣除边距和间距，再按比例分配宽度。同一行区域等高，原图等比缩放、允许留白。</p>
+        </section>
         <div class="composition-pair">
           <label class="form-field"><span>子图标注</span><select data-field="labels"><option value="lower">a, b, c</option><option value="upper">A, B, C</option><option value="parentheses">(a), (b), (c)</option><option value="custom">自定义</option><option value="none">不显示</option></select></label>
           <label class="form-field"><span>标注字号 · pt</span><input data-field="label_size" type="number" min="6" max="24" step="0.5" required></label>
@@ -64,15 +68,15 @@
   let mode = "edit", thumbnailSession = 0, thumbnailQueue = Promise.resolve();
   const thumbnails = new Map();
   let importedImages = [];
-  const { panelBox, fittedHeight, imageBox } = window.CompositionGeometry;
+  const { panelBox, fittedHeight, imageBox, rowWidths, parseWidthRatios, validateWidths } = window.CompositionGeometry;
   const clipboard = window.CompositionClipboard;
   const defaults = () => ({ name: "Figure 1", width_mm: 180, height_mm: 140, rows: 2, columns: 2,
-    margin_mm: 4, gap_mm: 3, labels: "lower", label_size: 10, source_bounds: "tight", panels: [] });
+    margin_mm: 4, gap_mm: 3, row_width_ratios: [], labels: "lower", label_size: 10, source_bounds: "tight", panels: [] });
   const baseUrl = () => `/api/projects/${encodeURIComponent(project.id)}/compositions`;
   const imagesUrl = () => `/api/projects/${encodeURIComponent(project.id)}/composition-images`;
   const sourceKey = (panel) => panel.image ? `image:${panel.image}` : `plot:${panel.plot}`;
   const sourceName = (panel) => (panel.image ? importedImages.find((item) => item.id === panel.image) : project.plots.find((item) => item.id === panel.plot))?.name || "原图已不存在";
-  const dirty = () => JSON.stringify(layout) !== baseline;
+  const dirty = () => JSON.stringify(layout) !== baseline || [...dialog.querySelectorAll("[data-ratio-row]")].some((input) => !input.validity.valid);
   const node = (tag, text, className = "") => {
     const el = document.createElement(tag); el.textContent = text; el.className = className; return el;
   };
@@ -93,6 +97,7 @@
     previewUrl = null;
     setMode("edit");
     drawGrid();
+    updateWidthSummaries();
   }
   function setMode(value) {
     mode = value;
@@ -244,7 +249,50 @@
       row.append(up, remove); container.append(row);
     });
   }
+  function updateWidthSummaries() {
+    dialog.querySelectorAll("[data-width-summary]").forEach((summary) => {
+      const widths = rowWidths(layout, Number(summary.dataset.widthSummary));
+      summary.textContent = widths.every((width) => Number.isFinite(width) && width > 0)
+        ? `${widths.map((width) => Number(width.toFixed(2))).join(" / ")} mm` : "请检查画布尺寸";
+    });
+  }
+  function renderWidthRatios() {
+    const container = $("#compositionWidthRatios"); container.replaceChildren();
+    const rows = Math.max(1, Math.min(6, Math.trunc(layout.rows) || 1));
+    const columns = Math.max(1, Math.min(6, Math.trunc(layout.columns) || 1));
+    for (let row = 1; row <= rows; row++) {
+      const label = node("label", "", "form-field");
+      label.append(node("span", `第 ${row} 行宽度比例`));
+      const input = document.createElement("input"); input.type = "text";
+      input.dataset.ratioRow = row; input.required = true;
+      input.setAttribute("aria-label", `第 ${row} 行宽度比例`);
+      input.value = (layout.row_width_ratios?.[row - 1] || Array(columns).fill(1)).join(":");
+      input.placeholder = columns === 3 ? "5:4:3" : Array(columns).fill(1).join(":");
+      const summary = node("small"); summary.dataset.widthSummary = row;
+      input.addEventListener("input", () => {
+        try {
+          const ratios = parseWidthRatios(input.value, layout.columns);
+          if (!layout.row_width_ratios?.length) layout.row_width_ratios = Array.from({ length: rows }, () => Array(columns).fill(1));
+          layout.row_width_ratios[row - 1] = ratios;
+          input.setCustomValidity(""); invalidate();
+          try { validateWidths(layout); } catch (error) { status(error.message, true); }
+        } catch (error) {
+          input.setCustomValidity(error.message); invalidate(); status(error.message, true);
+        }
+      });
+      label.append(input, summary); container.append(label);
+    }
+    updateWidthSummaries();
+  }
+  function resizeWidthRatios() {
+    if (layout.row_width_ratios?.length && Number.isInteger(layout.rows) && layout.rows >= 1 && layout.rows <= 6 &&
+        Number.isInteger(layout.columns) && layout.columns >= 1 && layout.columns <= 6) {
+      layout.row_width_ratios = Array.from({ length: layout.rows }, (_, row) =>
+        Array.from({ length: layout.columns }, (_, column) => layout.row_width_ratios[row]?.[column] ?? 1));
+    }
+  }
   function populate() {
+    resizeWidthRatios(); renderWidthRatios();
     fields.forEach((field) => { field.value = layout[field.dataset.field]; });
     renderPanels(); invalidate();
     $('[data-action="delete"]').hidden = !current;
@@ -266,6 +314,7 @@
         const key = `${r},${c}`; if (cells.has(key)) throw new Error("子图位置重叠，请调整位置或使用“按顺序平铺”"); cells.add(key);
       }
     }
+    validateWidths(layout);
   }
   async function save() {
     validate();
@@ -357,6 +406,7 @@
   function close() { if (busy || !canDiscard()) return; if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = null; clearThumbnails(); dialog.close(); }
   fields.forEach((field) => field.addEventListener("input", () => {
     layout[field.dataset.field] = field.type === "number" ? Number(field.value) : field.value;
+    if (["rows", "columns"].includes(field.dataset.field)) { resizeWidthRatios(); renderWidthRatios(); }
     if (field.dataset.field === "labels") renderPanels(); invalidate();
   }));
   $("#compositionSaved").addEventListener("change", () => {

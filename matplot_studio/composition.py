@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -41,6 +41,7 @@ class Composition(BaseModel):
     columns: int = Field(default=2, ge=1, le=6, strict=True)
     margin_mm: float = Field(default=4, ge=0, le=40)
     gap_mm: float = Field(default=3, ge=0, le=40)
+    row_width_ratios: list[list[Annotated[float, Field(gt=0, le=1000)]]] = Field(default_factory=list, max_length=6)
     labels: Literal["lower", "upper", "parentheses", "custom", "none"] = "lower"
     label_size: float = Field(default=10, ge=6, le=24)
     source_bounds: Literal["canvas", "tight"] = "tight"
@@ -52,6 +53,11 @@ class Composition(BaseModel):
         cell_h = (self.height_mm - 2 * self.margin_mm - (self.rows - 1) * self.gap_mm) / self.rows
         if cell_w < 8 or cell_h < 8:
             raise ValueError("画布过小或间距过大：每格需至少保留 8 mm 绘图空间")
+        if self.row_width_ratios and (len(self.row_width_ratios) != self.rows or
+                                     any(len(row) != self.columns for row in self.row_width_ratios)):
+            raise ValueError("每行的宽度比例数量必须与列数一致，比例行数必须与行数一致")
+        if any(width < 8 for row in range(1, self.rows + 1) for width in self.column_widths(row)):
+            raise ValueError("宽度比例使部分区域小于 8 mm，请调整比例或增加画布宽度")
         occupied = set()
         for panel in self.panels:
             if panel.row + panel.rowspan - 1 > self.rows or panel.column + panel.colspan - 1 > self.columns:
@@ -61,7 +67,26 @@ class Composition(BaseModel):
             if occupied & cells:
                 raise ValueError("子图位置重叠，请调整行列或跨格范围")
             occupied.update(cells)
+            x, _, width, _ = self.panel_box(panel)
+            for row in range(panel.row + 1, panel.row + panel.rowspan):
+                other = panel.model_copy(update={"row": row})
+                other_x, _, other_width, _ = self.panel_box(other)
+                if abs(x - other_x) > 1e-6 or abs(width - other_width) > 1e-6:
+                    raise ValueError("跨行子图的左右边界需对齐，请调整相关行的宽度比例或取消跨行")
         return self
+
+    def column_widths(self, row):
+        ratios = self.row_width_ratios[row - 1] if self.row_width_ratios else [1] * self.columns
+        available = self.width_mm - 2 * self.margin_mm - (self.columns - 1) * self.gap_mm
+        return [available * value / sum(ratios) for value in ratios]
+
+    def panel_box(self, panel):
+        widths = self.column_widths(panel.row)
+        row_height = (self.height_mm - 2 * self.margin_mm - (self.rows - 1) * self.gap_mm) / self.rows
+        return (self.margin_mm + sum(widths[:panel.column - 1]) + (panel.column - 1) * self.gap_mm,
+                self.margin_mm + (panel.row - 1) * (row_height + self.gap_mm),
+                sum(widths[panel.column - 1:panel.column - 1 + panel.colspan]) + (panel.colspan - 1) * self.gap_mm,
+                row_height * panel.rowspan + (panel.rowspan - 1) * self.gap_mm)
 
     def panel_label(self, index):
         if self.labels == "none":
@@ -161,16 +186,10 @@ def render_composition(store, renderer, project, layout, output_format="svg", dp
 
     pt = 72 / 25.4
     width, height = layout.width_mm * pt, layout.height_mm * pt
-    margin, gap = layout.margin_mm * pt, layout.gap_mm * pt
-    cell_w = (width - margin * 2 - gap * (layout.columns - 1)) / layout.columns
-    cell_h = (height - margin * 2 - gap * (layout.rows - 1)) / layout.rows
     with PDF_LOCK, pymupdf.open() as output:
         page = output.new_page(width=width, height=height)
         for index, panel in enumerate(layout.panels):
-            x = margin + (panel.column - 1) * (cell_w + gap)
-            y = margin + (panel.row - 1) * (cell_h + gap)
-            w = cell_w * panel.colspan + gap * (panel.colspan - 1)
-            h = cell_h * panel.rowspan + gap * (panel.rowspan - 1)
+            x, y, w, h = (value * pt for value in layout.panel_box(panel))
             label = layout.panel_label(index)
             is_raster = panel.image and images[panel.image][0].get("format") not in {"svg", "pdf"}
             if is_raster:

@@ -1,10 +1,41 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { panelBox, fittedHeight, imageBox } = require("../web/composition-geometry.js");
+const { panelBox, fittedHeight, imageBox, rowWidths, parseWidthRatios, validateWidths } = require("../web/composition-geometry.js");
 
 const base = { width_mm: 180, height_mm: 140, rows: 2, columns: 2,
   margin_mm: 4, gap_mm: 3, labels: "lower", label_size: 10,
   panels: [{ row: 1, column: 1, rowspan: 1, colspan: 1 }, { row: 2, column: 2, rowspan: 1, colspan: 1 }] };
+
+test("5:4:3 splits 120 mm into 50, 40, 30 mm with equal-height regions", () => {
+  const layout = { ...base, width_mm: 120, height_mm: 30, rows: 1, columns: 3, margin_mm: 0, gap_mm: 0,
+    row_width_ratios: [[5, 4, 3]], panels: [1, 2, 3].map(column => ({row:1,column,rowspan:1,colspan:1})) };
+  assert.deepEqual(layout.panels.map(panel => panelBox(layout, panel)), [
+    {x:0,y:0,width:50,height:30}, {x:50,y:0,width:40,height:30}, {x:90,y:0,width:30,height:30},
+  ]);
+  assert.equal(fittedHeight(layout, [5 / 3, 4 / 3, 1]), 30);
+  const inset = { ...layout, width_mm: 134, margin_mm: 4, gap_mm: 3 };
+  assert.deepEqual(rowWidths(inset, 1), [50, 40, 30]);
+  assert.equal(panelBox(inset, inset.panels[2]).x, 100);
+  assert.deepEqual(imageBox({width:50,height:30},1), {x:10,y:0,width:30,height:30});
+});
+
+test("rows have independent ratios and spanning panels require aligned boundaries", () => {
+  const layout = { ...base, width_mm:120, margin_mm:0, gap_mm:0, columns:3,
+    row_width_ratios:[[5,4,3],[6,3,3]], panels:[{row:1,column:1,rowspan:2,colspan:2}] };
+  assert.deepEqual(rowWidths(layout,2), [60,30,30]);
+  validateWidths(layout);
+  assert.equal(panelBox(layout,layout.panels[0]).width,90);
+  assert.throws(() => validateWidths({...layout,panels:[{row:1,column:1,rowspan:2,colspan:1}]}), /左右边界/);
+  assert.throws(() => validateWidths({...layout,row_width_ratios:[[100,1,1],[6,3,3]]}), /8 mm/);
+});
+
+test("ratio entry accepts decimals and Chinese separators but rejects invalid or incomplete values", () => {
+  for (const value of ["5:4:3", "5：4：3", "5, 4, 3", "5 4 3"]) assert.deepEqual(parseWidthRatios(value,3),[5,4,3]);
+  assert.deepEqual(parseWidthRatios("2.5:2:1.5",3),[2.5,2,1.5]);
+  for (const value of ["", "5:4", "5:4:", "5:0:3", "5:-1:3", "NaN:4:3", "Infinity:4:3", "1001:4:3"]) {
+    assert.throws(() => parseWidthRatios(value,3));
+  }
+});
 
 test("physical boxes retain margins, gaps and spanning dimensions", () => {
   const first = panelBox(base, base.panels[0]), last = panelBox(base, base.panels[1]);

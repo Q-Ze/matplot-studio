@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from matplot_studio.app import create_app
 from matplot_studio.composition import Composition, CompositionStore, render_composition
+from matplot_studio.composition_images import CompositionImages
 from matplot_studio.rendering import Renderer, RenderResult
 from matplot_studio.storage import ProjectStore, StorageError
 
@@ -43,6 +44,47 @@ class CompositionTests(unittest.TestCase):
         self.saved.delete(self.project, item["id"], updated["revision"])
         self.assertEqual(self.saved.list(self.project), [])
         self.assertTrue(self.plot.path.exists())
+
+    def test_weighted_widths_roundtrip_and_vector_export(self):
+        panels = []
+        for column, width in enumerate([50, 40, 30], 1):
+            svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="30"><rect width="{width}" height="30" fill="#3388aa"/></svg>'
+            image = CompositionImages(self.store).import_image(self.project, f"{column}.svg", svg.encode())
+            panels.append({"image": image["id"], "row": 1, "column": column})
+        layout = Composition(name="5:4:3", rows=1, columns=3, width_mm=120, height_mm=30,
+                             margin_mm=0, gap_mm=0, labels="none", row_width_ratios=[[5,4,3]], panels=panels)
+        self.assertEqual([layout.panel_box(panel) for panel in layout.panels],
+                         [(0,0,50,30), (50,0,40,30), (90,0,30,30)])
+        item = self.saved.save(self.project, layout)
+        restored = Composition.model_validate(self.saved.read(self.project, item["id"])["layout"])
+        self.assertEqual(restored.row_width_ratios, [[5,4,3]])
+        with pymupdf.open(stream=render_composition(self.store, Mock(), self.project, restored, "pdf"), filetype="pdf") as document:
+            rectangles = [drawing["rect"] for drawing in document[0].get_drawings()]
+            self.assertEqual(len(rectangles), 3)
+            for rect, (x, width) in zip(rectangles, [(0,50),(50,40),(90,30)]):
+                self.assertAlmostEqual(rect.x0 * 25.4 / 72, x, places=3)
+                self.assertAlmostEqual(rect.width * 25.4 / 72, width, places=3)
+                self.assertAlmostEqual(rect.height * 25.4 / 72, 30, places=3)
+            self.assertFalse(document[0].get_images())
+        self.assertIn(b"<path", render_composition(self.store, Mock(), self.project, restored, "svg"))
+        self.assertTrue(render_composition(self.store, Mock(), self.project, restored, "png", 72).startswith(b"\x89PNG"))
+
+    def test_ratio_validation_and_cross_row_alignment(self):
+        data = dict(name="Ratios", rows=2, columns=3, width_mm=134, margin_mm=4, gap_mm=3,
+                    row_width_ratios=[[5,4,3],[6,3,3]],
+                    panels=[{"plot": self.plot.plot, "row":1,"column":1,"rowspan":2,"colspan":2}])
+        layout = Composition(**data)
+        self.assertEqual(layout.column_widths(1), [50,40,30])
+        self.assertEqual(layout.column_widths(2), [60,30,30])
+        self.assertEqual(layout.panel_box(layout.panels[0])[2], 93)
+        for ratios in [[[5,4,3]], [[5,4],[5,4]], [[0,4,3],[6,3,3]], [[float("nan"),4,3],[6,3,3]],
+                       [[float("inf"),4,3],[6,3,3]], [[1000,1,1],[6,3,3]], [[5,4,3],[3,4,5]]]:
+            with self.subTest(ratios=ratios), self.assertRaises(ValidationError):
+                Composition(**{**data,"row_width_ratios":ratios})
+        legacy = self.layout.model_dump()
+        del legacy["row_width_ratios"]
+        restored = Composition.model_validate(legacy)
+        self.assertEqual(restored.column_widths(1), [84.5,84.5])
 
     def test_rejects_overlap_overflow_nonfinite_and_unusable_dimensions(self):
         cases = [
