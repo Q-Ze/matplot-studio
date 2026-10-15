@@ -51,8 +51,8 @@
         <div class="composition-preview"><div id="compositionGrid" tabindex="0" aria-label="拼图网格，可按 Ctrl 或 Command 加 V 粘贴子图"></div><img id="compositionImage" tabindex="0" alt="拼图实际导出效果" hidden></div>
         <section class="composition-panels">
           <div class="composition-toolbar"><strong>子图与位置</strong><span>拖动网格子图可换位；行列从 1 开始</span><button type="button" class="button button--quiet" data-action="arrange">按顺序平铺</button><button type="button" class="button button--quiet" data-action="paste">粘贴子图</button><button type="button" class="button button--quiet" data-action="import-image">导入示意图</button><button type="button" class="button button--quiet" data-action="add">＋ 添加子图</button></div>
-          <input id="compositionImageFile" type="file" accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,image/png,image/jpeg,image/webp,image/tiff" hidden>
-          <p class="composition-import-hint">点击画布后可按 Ctrl/⌘ + V 粘贴图片。支持 PNG、JPG、WebP、TIFF（单张 ≤ 20 MiB），保留透明背景和原始比例。</p>
+          <input id="compositionImageFile" type="file" accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,.svg,.pdf,image/png,image/jpeg,image/webp,image/tiff,image/svg+xml,application/pdf" hidden>
+          <p class="composition-import-hint">支持 PNG、JPG、WebP、单页 TIFF、SVG 和单页 PDF（≤ 20 MiB），保留原始比例；SVG/PDF 中的矢量内容在导出时保留。点击画布后可按 Ctrl/⌘ + V 粘贴图片。</p>
           <div id="compositionPanels"></div>
         </section>
       </main>
@@ -122,8 +122,13 @@
         const blob = await request(url, { signal: entry.controller.signal }, true);
         let width, height;
         if (imageId) {
-          const bitmap = await createImageBitmap(blob);
-          width = bitmap.width; height = bitmap.height; bitmap.close();
+          const source = importedImages.find((image) => image.id === imageId);
+          if (source?.width > 0 && source?.height > 0) {
+            width = source.width; height = source.height;
+          } else {
+            const bitmap = await createImageBitmap(blob);
+            width = bitmap.width; height = bitmap.height; bitmap.close();
+          }
         } else {
           const source = new DOMParser().parseFromString(await blob.text(), "image/svg+xml");
           const svg = source.documentElement, viewBox = svg.getAttribute("viewBox")?.trim().split(/[\s,]+/).map(Number);
@@ -305,7 +310,7 @@
   async function importImage(file) {
     const slot = imageSlot();
     if (file.size > 20 * 1024 * 1024) throw new Error("图片文件不能超过 20 MiB");
-    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/tiff": "tiff" }[file.type] || "png";
+    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/tiff": "tiff", "image/svg+xml": "svg", "application/pdf": "pdf" }[file.type] || "png";
     const name = file.name || `剪贴板图片-${Date.now()}.${extension}`;
     status(`正在导入 ${name}…`);
     const image = await request(`${imagesUrl()}?filename=${encodeURIComponent(name)}`, {
@@ -314,7 +319,8 @@
     importedImages.push(image);
     layout.rows = Math.max(layout.rows, slot.row);
     layout.panels.push({ image: image.id, ...slot, rowspan: 1, colspan: 1, label: "" });
-    populate(); status(`已导入 ${image.name} · ${image.width} × ${image.height} 像素 · 保存拼图以保留本次排版`);
+    const details = ["svg", "pdf"].includes(image.format) ? `${image.format.toUpperCase()} 素材 · 保留原始比例` : `${image.width} × ${image.height} 像素`;
+    populate(); status(`已导入 ${image.name} · ${details} · 保存拼图以保留本次排版`);
   }
   async function pasteFromClipboard() {
     imageSlot();

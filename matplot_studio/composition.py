@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 import uuid
 from typing import Literal, Optional
 
@@ -11,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .storage import ProjectStore, StorageError, revision_for
 from .composition_images import CompositionImages
+from .pdf_support import PDF_LOCK
 
 
 class Panel(BaseModel):
@@ -137,10 +137,6 @@ class CompositionStore:
             self._path(project, composition).unlink()
 
 
-# MuPDF must not be used concurrently by FastAPI's worker threads.
-_PDF_LOCK = threading.RLock()
-
-
 def render_composition(store, renderer, project, layout, output_format="svg", dpi=300):
     """Render each trusted source in its usual timed subprocess; retain vector artwork."""
     if output_format == "png" and layout.width_mm * layout.height_mm * (dpi / 25.4) ** 2 > 80_000_000:
@@ -150,7 +146,7 @@ def render_composition(store, renderer, project, layout, output_format="svg", dp
     for panel in layout.panels:
         if panel.image:
             if panel.image not in images:
-                images[panel.image] = CompositionImages(store).read(project, panel.image)[1]
+                images[panel.image] = CompositionImages(store).read(project, panel.image)
             continue
         if panel.plot in sources:
             continue
@@ -168,7 +164,7 @@ def render_composition(store, renderer, project, layout, output_format="svg", dp
     margin, gap = layout.margin_mm * pt, layout.gap_mm * pt
     cell_w = (width - margin * 2 - gap * (layout.columns - 1)) / layout.columns
     cell_h = (height - margin * 2 - gap * (layout.rows - 1)) / layout.rows
-    with _PDF_LOCK, pymupdf.open() as output:
+    with PDF_LOCK, pymupdf.open() as output:
         page = output.new_page(width=width, height=height)
         for index, panel in enumerate(layout.panels):
             x = margin + (panel.column - 1) * (cell_w + gap)
@@ -176,15 +172,18 @@ def render_composition(store, renderer, project, layout, output_format="svg", dp
             w = cell_w * panel.colspan + gap * (panel.colspan - 1)
             h = cell_h * panel.rowspan + gap * (panel.rowspan - 1)
             label = layout.panel_label(index)
-            if panel.image:
-                pixmap = pymupdf.Pixmap(images[panel.image])
+            is_raster = panel.image and images[panel.image][0].get("format") not in {"svg", "pdf"}
+            if is_raster:
+                content = images[panel.image][1]
+                pixmap = pymupdf.Pixmap(content)
                 scale = min(w / pixmap.width, h / pixmap.height)
                 image_w, image_h = pixmap.width * scale, pixmap.height * scale
                 image_x, image_y = x + (w - image_w) / 2, y + (h - image_h) / 2
                 page.insert_image(pymupdf.Rect(image_x, image_y, image_x + image_w, image_y + image_h),
-                                  stream=images[panel.image])
+                                  stream=content)
             else:
-                with pymupdf.open(stream=sources[panel.plot], filetype="pdf") as source:
+                content = images[panel.image][1] if panel.image else sources[panel.plot]
+                with pymupdf.open(stream=content, filetype="pdf") as source:
                     # Match the visible image rectangle, including contain-mode letterboxing.
                     scale = min(w / source[0].rect.width, h / source[0].rect.height)
                     image_w, image_h = source[0].rect.width * scale, source[0].rect.height * scale

@@ -449,7 +449,7 @@ def create_app(
 
     @app.get("/api/projects/{project}/composition-images/{image}")
     def get_composition_image(project: str, image: str):
-        _info, content = composition_images.read(project, image)
+        content = composition_images.preview(project, image)
         return Response(content, media_type="image/png", headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
     @app.post("/api/projects/{project}/compositions", status_code=201)
