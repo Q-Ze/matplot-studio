@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .contracts import ContractError, apply_settings_patch
 from .composition import Composition, CompositionStore, CompositionUpdate, render_composition
+from .composition_images import CompositionImages
 from .rendering import RenderResult, Renderer
 from .storage import MAX_IMPORT_BODY_BYTES, PlotDocument, ProjectStore, StorageError
 
@@ -168,6 +169,7 @@ def create_app(
     store = ProjectStore(Path(configured_workspace))
     renderer = Renderer(timeout_seconds=max(0.1, float(render_timeout)))
     compositions = CompositionStore(store)
+    composition_images = CompositionImages(store)
     app = FastAPI(title="Matplot Studio", version="0.1.0")
     app.state.store = store
     app.state.renderer = renderer
@@ -434,6 +436,21 @@ def create_app(
     @app.get("/api/projects/{project}/compositions")
     def list_compositions(project: str):
         return {"compositions": compositions.list(project)}
+
+    @app.get("/api/projects/{project}/composition-images")
+    def list_composition_images(project: str):
+        return {"images": composition_images.list(project)}
+
+    @app.post("/api/projects/{project}/composition-images", status_code=201)
+    async def import_composition_image(project: str, request: Request,
+                                       filename: str = Query(..., min_length=1, max_length=200)):
+        content = await _read_limited_body(request)
+        return composition_images.import_image(project, filename, content)
+
+    @app.get("/api/projects/{project}/composition-images/{image}")
+    def get_composition_image(project: str, image: str):
+        _info, content = composition_images.read(project, image)
+        return Response(content, media_type="image/png", headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
     @app.post("/api/projects/{project}/compositions", status_code=201)
     def create_composition(project: str, layout: Composition):

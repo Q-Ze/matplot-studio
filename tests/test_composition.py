@@ -116,6 +116,41 @@ class CompositionTests(unittest.TestCase):
         self.assertIn("attachment", response.headers["content-disposition"])
         self.assertTrue(response.body.startswith(b"%PDF"))
 
+    def test_labels_overlay_the_visible_image_without_changing_its_geometry(self):
+        renderer = Mock()
+        with pymupdf.open() as source:
+            page = source.new_page(width=200, height=100)
+            page.draw_rect(page.rect, fill=(0.6, 0.8, 1), color=None)
+            renderer.export_image.return_value = RenderResult(True, "source", 0, svg=source.tobytes())
+        layout = Composition(name="Overlay", width_mm=100, height_mm=100, rows=1, columns=1,
+                             panels=[{"plot": self.plot.plot, "row": 1, "column": 1}])
+        rectangles = []
+        for labels in ["none", "lower", "upper", "parentheses", "custom"]:
+            settings = layout.model_dump()
+            settings["labels"] = labels
+            settings["panels"][0]["label"] = "Panel A"
+            configured = Composition.model_validate(settings)
+            result = render_composition(self.store, renderer, self.project, configured, "pdf")
+            with pymupdf.open(stream=result, filetype="pdf") as doc:
+                page = doc[0]
+                rect = page.get_drawings()[0]["rect"]
+                rectangles.append(tuple(rect))
+                if labels != "none":
+                    label_rect = page.search_for(configured.panel_label(0))[0]
+                    self.assertTrue(rect.contains(label_rect), (rect, label_rect))
+                    self.assertLess(label_rect.y0 - rect.y0, 3)
+                    # Black glyph pixels on an opaque blue panel prove the label is on top.
+                    pix = page.get_pixmap(clip=label_rect, matrix=pymupdf.Matrix(2, 2))
+                    self.assertTrue(any(max(pix.samples[i:i + 3]) < 80 for i in range(0, len(pix.samples), 3)))
+        for rect in rectangles[1:]:
+            for actual, expected in zip(rect, rectangles[0]):
+                self.assertAlmostEqual(actual, expected, places=4)
+
+    def test_small_cells_do_not_reserve_space_for_labels(self):
+        layout = self.layout.model_dump()
+        layout.update(width_mm=30, height_mm=30, margin_mm=0, gap_mm=0, rows=3, columns=3, label_size=24)
+        self.assertEqual(Composition.model_validate(layout).height_mm, 30)
+
 
 if __name__ == "__main__":
     unittest.main()

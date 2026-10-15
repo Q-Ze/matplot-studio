@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { panelBox, fittedHeight } = require("../web/composition-geometry.js");
+const { panelBox, fittedHeight, imageBox } = require("../web/composition-geometry.js");
 
 const base = { width_mm: 180, height_mm: 140, rows: 2, columns: 2,
   margin_mm: 4, gap_mm: 3, labels: "lower", label_size: 10,
@@ -22,24 +22,32 @@ test("height fitting accommodates the tallest original without distorting any pa
   assert.equal(fitted.width_mm, base.width_mm);
   base.panels.forEach((panel, index) => {
     const box = panelBox(fitted, panel);
-    assert.ok(box.height - box.labelHeight >= box.width / ratios[index]);
+    assert.ok(box.height >= box.width / ratios[index]);
   });
   const limiting = panelBox(fitted, base.panels[1]);
-  assert.ok(limiting.height - limiting.labelHeight - limiting.width / 0.8 < 0.1);
+  assert.ok(limiting.height - limiting.width / 0.8 < 0.1);
 });
 
-test("spanning panels account for the internal gap and a single label", () => {
+test("spanning panels account for the internal gap without reserving a label band", () => {
   const layout = { ...base, panels: [{ row: 1, column: 1, rowspan: 2, colspan: 1 }] };
   layout.height_mm = fittedHeight(layout, [0.5]);
   const box = panelBox(layout, layout.panels[0]);
-  assert.ok(box.height - box.labelHeight >= box.width / 0.5);
-  assert.ok(box.height - box.labelHeight - box.width / 0.5 < 0.1);
+  assert.ok(box.height >= box.width / 0.5);
+  assert.ok(box.height - box.width / 0.5 < 0.1);
 });
 
-test("hiding labels removes the reserved label band", () => {
-  const layout = { ...base, labels: "none" };
-  assert.equal(panelBox(layout, base.panels[0]).labelHeight, 0);
-  assert.ok(fittedHeight(layout, [1, 1]) < fittedHeight(base, [1, 1]));
+test("label visibility and font size do not change fitted height or image placement", () => {
+  const unlabelled = { ...base, labels: "none" };
+  for (const labels of ["lower", "upper", "parentheses", "custom"]) {
+    const layout = { ...base, labels, label_size: 24 };
+    assert.deepEqual(panelBox(layout, base.panels[0]), panelBox(unlabelled, base.panels[0]));
+    assert.equal(fittedHeight(layout, [1, 1]), fittedHeight(unlabelled, [1, 1]));
+  }
+});
+
+test("overlay anchors follow the visible image even with horizontal or vertical letterboxing", () => {
+  assert.deepEqual(imageBox({ width: 100, height: 100 }, 2), { x: 0, y: 25, width: 100, height: 50 });
+  assert.deepEqual(imageBox({ width: 100, height: 100 }, 0.5), { x: 25, y: 0, width: 50, height: 100 });
 });
 
 test("fitting reports missing sources and oversized results without changing the layout", () => {

@@ -44,12 +44,15 @@
           <button type="button" class="button button--quiet" data-action="preview">生成预览</button>
           <button type="button" class="button button--quiet" data-action="refresh">刷新原图</button>
           <select id="compositionDpi" aria-label="PNG 分辨率"><option value="300">300 DPI</option><option value="600">600 DPI</option></select>
+          <button type="button" class="button button--quiet" data-action="copy" title="按所选 DPI 将当前拼图复制为 PNG">复制拼图</button>
           <button type="button" class="button button--quiet" data-export="pdf">PDF</button><button type="button" class="button button--quiet" data-export="svg">SVG</button><button type="button" class="button button--quiet" data-export="png">PNG</button>
         </div>
         <p id="compositionStatus" class="composition-status" role="status" aria-live="polite"></p>
-        <div class="composition-preview"><div id="compositionGrid" aria-label="拼图网格"></div><img id="compositionImage" alt="拼图实际导出效果" hidden></div>
+        <div class="composition-preview"><div id="compositionGrid" tabindex="0" aria-label="拼图网格，可按 Ctrl 或 Command 加 V 粘贴子图"></div><img id="compositionImage" tabindex="0" alt="拼图实际导出效果" hidden></div>
         <section class="composition-panels">
-          <div class="composition-toolbar"><strong>子图与位置</strong><span>拖动网格子图可换位；行列从 1 开始</span><button type="button" class="button button--quiet" data-action="arrange">按顺序平铺</button><button type="button" class="button button--quiet" data-action="add">＋ 添加子图</button></div>
+          <div class="composition-toolbar"><strong>子图与位置</strong><span>拖动网格子图可换位；行列从 1 开始</span><button type="button" class="button button--quiet" data-action="arrange">按顺序平铺</button><button type="button" class="button button--quiet" data-action="paste">粘贴子图</button><button type="button" class="button button--quiet" data-action="import-image">导入示意图</button><button type="button" class="button button--quiet" data-action="add">＋ 添加子图</button></div>
+          <input id="compositionImageFile" type="file" accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,image/png,image/jpeg,image/webp,image/tiff" hidden>
+          <p class="composition-import-hint">点击画布后可按 Ctrl/⌘ + V 粘贴图片。支持 PNG、JPG、WebP、TIFF（单张 ≤ 20 MiB），保留透明背景和原始比例。</p>
           <div id="compositionPanels"></div>
         </section>
       </main>
@@ -60,10 +63,15 @@
   let project, layout, saved = [], current = null, baseline = "", busy = false, previewUrl = null, dragging = null;
   let mode = "edit", thumbnailSession = 0, thumbnailQueue = Promise.resolve();
   const thumbnails = new Map();
-  const { panelBox, fittedHeight } = window.CompositionGeometry;
+  let importedImages = [];
+  const { panelBox, fittedHeight, imageBox } = window.CompositionGeometry;
+  const clipboard = window.CompositionClipboard;
   const defaults = () => ({ name: "Figure 1", width_mm: 180, height_mm: 140, rows: 2, columns: 2,
     margin_mm: 4, gap_mm: 3, labels: "lower", label_size: 10, source_bounds: "tight", panels: [] });
   const baseUrl = () => `/api/projects/${encodeURIComponent(project.id)}/compositions`;
+  const imagesUrl = () => `/api/projects/${encodeURIComponent(project.id)}/composition-images`;
+  const sourceKey = (panel) => panel.image ? `image:${panel.image}` : `plot:${panel.plot}`;
+  const sourceName = (panel) => (panel.image ? importedImages.find((item) => item.id === panel.image) : project.plots.find((item) => item.id === panel.plot))?.name || "原图已不存在";
   const dirty = () => JSON.stringify(layout) !== baseline;
   const node = (tag, text, className = "") => {
     const el = document.createElement(tag); el.textContent = text; el.className = className; return el;
@@ -73,7 +81,7 @@
     $("#compositionStatus").classList.toggle("is-error", error);
   }
   async function request(url, options = {}, blob = false) {
-    const response = await fetch(url, { ...options, headers: { "Content-Type": "application/json" } });
+    const response = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...options.headers } });
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error?.message || error.detail?.map?.((item) => item.msg).join("；") || `请求失败（${response.status}）`);
@@ -99,21 +107,31 @@
     thumbnails.forEach((entry) => { entry.controller.abort(); if (entry.url) URL.revokeObjectURL(entry.url); });
     thumbnails.clear(); thumbnailQueue = Promise.resolve();
   }
-  function thumbnail(plot) {
-    const key = `${project.id}/${plot}/${layout.source_bounds}`;
+  function thumbnail(panel) {
+    const key = `${project.id}/${sourceKey(panel)}/${panel.image ? "original" : layout.source_bounds}`;
     if (thumbnails.has(key)) return thumbnails.get(key);
     const session = thumbnailSession, bounds = layout.source_bounds, projectId = project.id;
+    const imageId = panel.image, plotId = panel.plot;
     const entry = { state: "loading", controller: new AbortController() };
     thumbnails.set(key, entry);
     entry.promise = thumbnailQueue.then(async () => {
       if (session !== thumbnailSession) return entry;
       try {
-        const blob = await request(`/api/projects/${encodeURIComponent(projectId)}/plots/${encodeURIComponent(plot)}/export/image?format=svg&bounds=${bounds}`, { signal: entry.controller.signal }, true);
-        const source = new DOMParser().parseFromString(await blob.text(), "image/svg+xml");
-        const svg = source.documentElement, viewBox = svg.getAttribute("viewBox")?.trim().split(/[\s,]+/).map(Number);
-        const width = viewBox?.[2] || parseFloat(svg.getAttribute("width"));
-        const height = viewBox?.[3] || parseFloat(svg.getAttribute("height"));
-        if (svg.localName !== "svg" || !(width > 0 && height > 0)) throw new Error("无法读取原图尺寸");
+        const url = imageId ? `/api/projects/${encodeURIComponent(projectId)}/composition-images/${encodeURIComponent(imageId)}`
+          : `/api/projects/${encodeURIComponent(projectId)}/plots/${encodeURIComponent(plotId)}/export/image?format=svg&bounds=${bounds}`;
+        const blob = await request(url, { signal: entry.controller.signal }, true);
+        let width, height;
+        if (imageId) {
+          const bitmap = await createImageBitmap(blob);
+          width = bitmap.width; height = bitmap.height; bitmap.close();
+        } else {
+          const source = new DOMParser().parseFromString(await blob.text(), "image/svg+xml");
+          const svg = source.documentElement, viewBox = svg.getAttribute("viewBox")?.trim().split(/[\s,]+/).map(Number);
+          width = viewBox?.[2] || parseFloat(svg.getAttribute("width"));
+          height = viewBox?.[3] || parseFloat(svg.getAttribute("height"));
+          if (svg.localName !== "svg") throw new Error("无法读取原图尺寸");
+        }
+        if (!(width > 0 && height > 0)) throw new Error("无法读取原图尺寸");
         if (session !== thumbnailSession) return entry;
         Object.assign(entry, { state: "ready", ratio: width / height, url: URL.createObjectURL(blob) });
       } catch (error) {
@@ -159,16 +177,18 @@
       if (panel.row < 1 || panel.column < 1 || panel.row + panel.rowspan - 1 > rows || panel.column + panel.colspan - 1 > columns) return;
       const tile = node("div", "", "composition-tile");
       const box = position(tile, panel);
-      const title = project.plots.find((plot) => plot.id === panel.plot)?.name || "原图已不存在";
+      const title = sourceName(panel);
       tile.title = `${labelFor(index)} ${title} · 拖动换位`;
       tile.setAttribute("aria-label", tile.title);
       const label = node("b", labelFor(index));
-      label.style.height = `${100 * box.labelHeight / box.height}%`;
       label.style.fontSize = `${layout.label_size * 25.4 / 72 / layout.width_mm * 100}cqw`;
       const artwork = node("div", "", "composition-artwork");
-      artwork.style.top = `${100 * box.labelHeight / box.height}%`;
-      const source = thumbnail(panel.plot);
+      const source = thumbnail(panel);
+      label.hidden = source.state !== "ready";
       if (source.state === "ready") {
+        const visible = imageBox(box, source.ratio);
+        label.style.left = `${100 * (visible.x + 1) / box.width}%`;
+        label.style.top = `${100 * (visible.y + 1) / box.height}%`;
         const img = document.createElement("img"); img.src = source.url; img.alt = title; img.draggable = false;
         artwork.append(img);
       } else {
@@ -195,9 +215,13 @@
       const row = node("div", "", "composition-panel-row");
       const sourceLabel = node("label", `子图 ${index + 1}`);
       const select = document.createElement("select"); select.setAttribute("aria-label", `子图 ${index + 1} 来源`);
-      project.plots.forEach((plot) => { const option = node("option", plot.name); option.value = plot.id; select.append(option); });
-      if (!project.plots.some((plot) => plot.id === panel.plot)) { const option = node("option", "原图已不存在，请重新选择"); option.value = panel.plot; select.append(option); }
-      select.value = panel.plot; select.addEventListener("change", () => { panel.plot = select.value; invalidate(); });
+      const sources = [...project.plots.map((plot) => ({ key: `plot:${plot.id}`, name: plot.name })),
+        ...importedImages.map((image) => ({ key: `image:${image.id}`, name: `示意图 · ${image.name}` }))];
+      sources.forEach((source) => { const option = node("option", source.name); option.value = source.key; select.append(option); });
+      if (!sources.some((source) => source.key === sourceKey(panel))) { const option = node("option", "原图已不存在，请重新选择"); option.value = sourceKey(panel); select.append(option); }
+      select.value = sourceKey(panel); select.addEventListener("change", () => {
+        const [kind, id] = select.value.split(":"); delete panel.plot; delete panel.image; panel[kind] = id; invalidate();
+      });
       sourceLabel.append(select); row.append(sourceLabel);
       for (const [key, title] of [["row", "行"], ["column", "列"], ["rowspan", "跨行"], ["colspan", "跨列"], ["label", "自定义标注"]]) {
         const wrapper = node("label", title), input = document.createElement("input");
@@ -270,6 +294,60 @@
     setMode("preview");
   }
   function canDiscard() { return !dirty() || window.confirm("有未保存的拼图修改，确定放弃这些修改吗？"); }
+  function imageSlot() {
+    if (layout.panels.length >= 16) throw new Error("每张拼图最多支持 16 张子图，请先移除一张");
+    for (let row = 1; row <= layout.rows; row++) for (let column = 1; column <= layout.columns; column++) {
+      if (!layout.panels.some((panel) => row >= panel.row && row < panel.row + panel.rowspan && column >= panel.column && column < panel.column + panel.colspan)) return { row, column };
+    }
+    if (layout.rows < 6) return { row: layout.rows + 1, column: 1 };
+    throw new Error("网格已满，请先增加列数或移除一张子图");
+  }
+  async function importImage(file) {
+    const slot = imageSlot();
+    if (file.size > 20 * 1024 * 1024) throw new Error("图片文件不能超过 20 MiB");
+    const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/tiff": "tiff" }[file.type] || "png";
+    const name = file.name || `剪贴板图片-${Date.now()}.${extension}`;
+    status(`正在导入 ${name}…`);
+    const image = await request(`${imagesUrl()}?filename=${encodeURIComponent(name)}`, {
+      method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" },
+    });
+    importedImages.push(image);
+    layout.rows = Math.max(layout.rows, slot.row);
+    layout.panels.push({ image: image.id, ...slot, rowspan: 1, colspan: 1, label: "" });
+    populate(); status(`已导入 ${image.name} · ${image.width} × ${image.height} 像素 · 保存拼图以保留本次排版`);
+  }
+  async function pasteFromClipboard() {
+    imageSlot();
+    status("正在读取剪贴板图片…");
+    await importImage(await clipboard.readImage());
+  }
+  async function copyComposition() {
+    const supportMessage = clipboard.writeSupportMessage();
+    if (supportMessage) throw new Error(supportMessage);
+    const dpi = Number($("#compositionDpi").value);
+    const size = { width_mm: layout.width_mm, height_mm: layout.height_mm };
+    const pngPromise = (async () => {
+      await save(); status(`正在生成 ${dpi} DPI PNG 并复制…`);
+      return request(`${baseUrl()}/${current.id}/export?format=png&dpi=${dpi}&revision=${current.revision}`, {}, true);
+    })();
+    await clipboard.writeImage(pngPromise, size);
+    status(`${dpi} DPI PNG 已复制到剪贴板 · 拼图已保存`);
+  }
+  dialog.addEventListener("paste", (event) => {
+    // Preserve normal paste in names, numeric inputs and custom labels.
+    if (event.target.closest?.("input, textarea") || event.target.isContentEditable) return;
+    const image = clipboard.pastedImage(event.clipboardData);
+    if (!image) return;
+    event.preventDefault();
+    if (busy) return;
+    run(() => importImage(image));
+  });
+  $("#compositionImageFile").addEventListener("change", () => {
+    const file = $("#compositionImageFile").files[0];
+    $("#compositionImageFile").value = "";
+    if (!file) return;
+    run(() => importImage(file));
+  });
   function close() { if (busy || !canDiscard()) return; if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = null; clearThumbnails(); dialog.close(); }
   fields.forEach((field) => field.addEventListener("input", () => {
     layout[field.dataset.field] = field.type === "number" ? Number(field.value) : field.value;
@@ -296,6 +374,11 @@
       }, true); return;
     }
     const action = button.dataset.action;
+    if (action === "paste") run(pasteFromClipboard);
+    if (action === "copy") run(copyComposition, true);
+    if (action === "import-image") {
+      try { imageSlot(); $("#compositionImageFile").click(); } catch (error) { status(error.message, true); }
+    }
     if (action === "close") close();
     if (action === "new" && canDiscard()) { current = null; layout = defaults(); baseline = JSON.stringify(layout); savedOptions(); populate(); }
     if (action === "save") run(save, true);
@@ -305,7 +388,7 @@
     if (action === "refresh") { clearThumbnails(); invalidate(); }
     if (action === "fit") run(async () => {
       validate(); status("正在读取原图比例并适配高度…");
-      const sources = await Promise.all(layout.panels.map((panel) => thumbnail(panel.plot).promise));
+      const sources = await Promise.all(layout.panels.map((panel) => thumbnail(panel).promise));
       const failed = sources.find((source) => source.state !== "ready");
       if (failed) throw new Error(failed.error || "原图载入失败，请刷新原图后重试");
       layout.height_mm = fittedHeight(layout, sources.map((source) => source.ratio));
@@ -322,7 +405,7 @@
       renderPanels(); invalidate();
     }
     if (action === "add") {
-      if (!project.plots.length) { status("请先向项目添加图表", true); return; }
+      if (!project.plots.length && !importedImages.length) { status("请先导入示意图或向项目添加图表", true); return; }
       if (layout.panels.length >= 16) { status("每张拼图最多支持 16 张子图", true); return; }
       let slot;
       for (let row = 1; row <= layout.rows && !slot; row++) for (let column = 1; column <= layout.columns; column++) {
@@ -330,18 +413,19 @@
       }
       if (!slot) { status("网格已满，请先增加行列数", true); return; }
       const source = project.plots.find((plot) => !layout.panels.some((panel) => panel.plot === plot.id)) || project.plots[0];
-      layout.panels.push({ plot: source.id, ...slot, rowspan: 1, colspan: 1, label: "" }); renderPanels(); invalidate();
+      layout.panels.push({ ...(source ? { plot: source.id } : { image: importedImages[0].id }), ...slot, rowspan: 1, colspan: 1, label: "" }); renderPanels(); invalidate();
     }
   });
   window.CompositionEditor = {
     async open(selectedProject) {
       if (dialog.open) return;
       clearThumbnails();
-      project = selectedProject; current = null; layout = defaults(); baseline = JSON.stringify(layout); saved = [];
+      project = selectedProject; current = null; layout = defaults(); baseline = JSON.stringify(layout); saved = []; importedImages = [];
       $("#compositionProject").textContent = project.name; savedOptions(); populate(); dialog.showModal();
       await run(async () => {
         status("正在载入已保存的拼图…");
-        saved = (await request(baseUrl())).compositions;
+        const [layouts, images] = await Promise.all([request(baseUrl()), request(imagesUrl())]);
+        saved = layouts.compositions; importedImages = images.images;
         if (saved.length) { current = saved[0]; layout = structuredClone(current.layout); baseline = JSON.stringify(layout); }
         savedOptions(); populate();
       });

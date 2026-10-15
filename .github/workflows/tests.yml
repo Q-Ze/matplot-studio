@@ -26,5 +26,7 @@ jobs:
       - name: Check layout geometry and JavaScript
         run: |
           node --test tests/test_composition_geometry.cjs
+          node --test tests/test_composition_clipboard.cjs
           node --check web/app.js
           node --check web/composition.js
+          node --check web/composition-clipboard.js

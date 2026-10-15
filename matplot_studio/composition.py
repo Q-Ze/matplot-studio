@@ -5,22 +5,30 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .storage import ProjectStore, StorageError, revision_for
+from .composition_images import CompositionImages
 
 
 class Panel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    plot: str = Field(min_length=1, max_length=128)
+    plot: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    image: Optional[str] = Field(default=None, min_length=1, max_length=128)
     row: int = Field(ge=1, le=6, strict=True)
     column: int = Field(ge=1, le=6, strict=True)
     rowspan: int = Field(default=1, ge=1, le=6, strict=True)
     colspan: int = Field(default=1, ge=1, le=6, strict=True)
     label: str = Field(default="", max_length=16, pattern=r"^[\x20-\x7e]*$")
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if (self.plot is None) == (self.image is None):
+            raise ValueError("每张子图必须且只能选择一个图表或一张导入图片")
+        return self
 
 
 class Composition(BaseModel):
@@ -42,9 +50,8 @@ class Composition(BaseModel):
     def valid_layout(self):
         cell_w = (self.width_mm - 2 * self.margin_mm - (self.columns - 1) * self.gap_mm) / self.columns
         cell_h = (self.height_mm - 2 * self.margin_mm - (self.rows - 1) * self.gap_mm) / self.rows
-        label_h = self.label_size * 1.5 * 25.4 / 72 if self.labels != "none" else 0
-        if cell_w < 8 or cell_h < label_h + 8:
-            raise ValueError("画布过小或间距过大：每格需至少保留 8 mm 绘图空间及标注空间")
+        if cell_w < 8 or cell_h < 8:
+            raise ValueError("画布过小或间距过大：每格需至少保留 8 mm 绘图空间")
         occupied = set()
         for panel in self.panels:
             if panel.row + panel.rowspan - 1 > self.rows or panel.column + panel.colspan - 1 > self.columns:
@@ -109,7 +116,10 @@ class CompositionStore:
             if composition is not None:
                 self.check_revision(project, composition, revision)
             for panel in layout.panels:
-                self.store.read_plot(project, panel.plot)
+                if panel.plot:
+                    self.store.read_plot(project, panel.plot)
+                else:
+                    CompositionImages(self.store).read(project, panel.image, include_content=False)
             composition = composition or uuid.uuid4().hex
             directory.mkdir(exist_ok=True)
             path = self._path(project, composition)
@@ -136,7 +146,12 @@ def render_composition(store, renderer, project, layout, output_format="svg", dp
     if output_format == "png" and layout.width_mm * layout.height_mm * (dpi / 25.4) ** 2 > 80_000_000:
         raise StorageError("image_too_large", "PNG 超过 8000 万像素，请减小尺寸或 DPI", status_code=422)
     sources = {}
+    images = {}
     for panel in layout.panels:
+        if panel.image:
+            if panel.image not in images:
+                images[panel.image] = CompositionImages(store).read(project, panel.image)[1]
+            continue
         if panel.plot in sources:
             continue
         document = store.read_plot(project, panel.plot)
@@ -161,15 +176,28 @@ def render_composition(store, renderer, project, layout, output_format="svg", dp
             w = cell_w * panel.colspan + gap * (panel.colspan - 1)
             h = cell_h * panel.rowspan + gap * (panel.rowspan - 1)
             label = layout.panel_label(index)
-            label_h = layout.label_size * 1.5 if layout.labels != "none" else 0
-            with pymupdf.open(stream=sources[panel.plot], filetype="pdf") as source:
-                if source[0].get_contents():
-                    page.show_pdf_page(pymupdf.Rect(x, y + label_h, x + w, y + h), source, 0,
-                                       keep_proportion=True)
+            if panel.image:
+                pixmap = pymupdf.Pixmap(images[panel.image])
+                scale = min(w / pixmap.width, h / pixmap.height)
+                image_w, image_h = pixmap.width * scale, pixmap.height * scale
+                image_x, image_y = x + (w - image_w) / 2, y + (h - image_h) / 2
+                page.insert_image(pymupdf.Rect(image_x, image_y, image_x + image_w, image_y + image_h),
+                                  stream=images[panel.image])
+            else:
+                with pymupdf.open(stream=sources[panel.plot], filetype="pdf") as source:
+                    # Match the visible image rectangle, including contain-mode letterboxing.
+                    scale = min(w / source[0].rect.width, h / source[0].rect.height)
+                    image_w, image_h = source[0].rect.width * scale, source[0].rect.height * scale
+                    image_x, image_y = x + (w - image_w) / 2, y + (h - image_h) / 2
+                    if source[0].get_contents():
+                        page.show_pdf_page(pymupdf.Rect(x, y, x + w, y + h), source, 0,
+                                           keep_proportion=True)
             if label:
-                if pymupdf.get_text_length(label, fontname="hebo", fontsize=layout.label_size) > w:
+                inset = pt  # 1 mm inside the visible image, without reserving layout space.
+                if pymupdf.get_text_length(label, fontname="hebo", fontsize=layout.label_size) > image_w - 2 * inset:
                     raise StorageError("label_too_wide", "自定义标注超出子图宽度，请缩短标注", status_code=422)
-                page.insert_text((x, y + layout.label_size), label, fontsize=layout.label_size, fontname="hebo")
+                page.insert_text((image_x + inset, image_y + inset + layout.label_size), label,
+                                 fontsize=layout.label_size, fontname="hebo", overlay=True)
         if output_format == "pdf":
             return output.tobytes(garbage=4, deflate=True)
         if output_format == "svg":
