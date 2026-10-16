@@ -19,6 +19,7 @@
     mobileBackdrop: $("#mobileBackdrop"),
     projectTree: $("#projectTree"),
     projectSearch: $("#projectSearch"),
+    plotSort: $("#plotSort"),
     refreshProjectsButton: $("#refreshProjectsButton"),
     importProjectButton: $("#importProjectButton"),
     newProjectButton: $("#newProjectButton"),
@@ -129,6 +130,7 @@
 
   const state = {
     projects: [],
+    plotSort: readStorage("matplot.plotSort", "original"),
     project: null,
     plot: null,
     current: null,
@@ -1097,15 +1099,29 @@
     return true;
   }
 
+  function syncCurrentPlotSummary(result) {
+    for (const project of new Set([...state.projects, state.project])) {
+      if (project?.id !== state.project?.id) continue;
+      for (const plot of new Set([...project.plots, state.plot])) {
+        if (plot?.id !== state.plot?.id) continue;
+        if (result.meta?.name) plot.name = result.meta.name;
+        Object.assign(plot.raw, result.meta || {}, { modified_at: result.modified_at ?? plot.raw?.modified_at,
+          revision: result.revision ?? plot.raw?.revision });
+      }
+    }
+    updateSelectionUI();
+  }
+
   function renderProjectTree() {
     const query = dom.projectSearch.value.trim().toLocaleLowerCase();
     dom.projectTree.replaceChildren();
     let visibleCount = 0;
 
     for (const project of state.projects) {
+      const orderedPlots = window.ProjectSorting.sortPlots(project.plots, state.plotSort);
       const matchingPlots = query
-        ? project.plots.filter((plot) => plot.name.toLocaleLowerCase().includes(query))
-        : project.plots;
+        ? orderedPlots.filter((plot) => plot.name.toLocaleLowerCase().includes(query))
+        : orderedPlots;
       const projectMatches = !query || project.name.toLocaleLowerCase().includes(query);
       if (!projectMatches && !matchingPlots.length) continue;
       visibleCount += 1;
@@ -1165,12 +1181,13 @@
       wrapper.append(row);
 
       const plots = element("div", "tree-plots");
-      const list = projectMatches && query ? project.plots : matchingPlots;
+      const list = projectMatches && query ? orderedPlots : matchingPlots;
       list.forEach((plot) => {
         const plotRow = element("div", "tree-plot__row");
         const button = element("button", "tree-plot");
         button.type = "button";
-        button.title = plot.name;
+        button.title = Number.isFinite(plot.raw?.modified_at)
+          ? `${plot.name}\n最后修改：${new Date(plot.raw.modified_at).toLocaleString()}` : plot.name;
         button.dataset.projectId = project.id;
         button.dataset.plotId = plot.id;
         if (state.project?.id === project.id && state.plot?.id === plot.id) button.classList.add("is-active");
@@ -1424,6 +1441,7 @@
       embeddedRender = isObject(result.render) ? result.render : null;
       state.revision = result.revision ?? result.version ?? state.revision;
       state.current = { ...state.current, ...result, revision: state.revision };
+      syncCurrentPlotSummary(result);
       updateExportControls();
 
       if (version === state.codeVersion && code === dom.codeInput.value) {
@@ -2160,6 +2178,7 @@
         const result = unwrap(payload) || {};
         state.revision = result.revision ?? result.version ?? state.revision;
         if (state.current) state.current = { ...state.current, ...result, revision: state.revision };
+        syncCurrentPlotSummary(result);
         updateExportControls();
         if (typeof result.code === "string" && codeVersionAtStart === state.codeVersion && !state.dirty) {
           dom.codeInput.value = result.code;
@@ -2755,7 +2774,7 @@
           for (const plot of new Set([...project.plots, currentPlot ? state.plot : null, target.plot])) {
             if (plot?.id !== target.plot.id) continue;
             plot.name = result.meta.name;
-            Object.assign(plot.raw, result.meta, { revision: result.revision });
+            Object.assign(plot.raw, result.meta, { revision: result.revision, modified_at: result.modified_at });
           }
         }
       }
@@ -3006,7 +3025,7 @@
       if (state.dirty && !(await saveCode({ render: false }))) return;
       await state.patchChain;
       closeMobilePanels();
-      await window.CompositionEditor.open(project);
+      await window.CompositionEditor.open({ ...project, plots: window.ProjectSorting.sortPlots(project.plots, state.plotSort) });
     });
     bindExportMenu(dom.imageExportMenu);
     bindExportMenu(dom.dataExportMenu);
@@ -3020,6 +3039,10 @@
       if (!event.target.closest(".export-menu")) closeExportMenus();
     });
     dom.projectSearch.addEventListener("input", renderProjectTree);
+    dom.plotSort.value = window.ProjectSorting.modes.includes(state.plotSort) ? state.plotSort : "original";
+    dom.plotSort.addEventListener("change", () => {
+      state.plotSort = dom.plotSort.value; writeStorage("matplot.plotSort", state.plotSort); renderProjectTree();
+    });
     dom.propertySearch.addEventListener("input", () => renderProperties());
     dom.refreshProjectsButton.addEventListener("click", () => fetchProjects());
     dom.importProjectButton.addEventListener("click", openImportProjectDialog);

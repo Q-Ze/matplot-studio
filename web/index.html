@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f5f7f8" />
     <title>Matplot Studio</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20261015-3" />
+    <link rel="stylesheet" href="./styles.css?v=20261016-1" />
   </head>
   <body>
     <div class="app" id="app">
@@ -74,6 +74,10 @@
             <kbd>/</kbd>
           </label>
 
+          <label class="plot-sort"><span>图表排序</span><select id="plotSort" aria-label="项目内图表排序">
+            <option value="original">原顺序</option><option value="name-asc">名称 · A → Z</option><option value="name-desc">名称 · Z → A</option>
+            <option value="modified-desc">修改时间 · 最新在前</option><option value="modified-asc">修改时间 · 最早在前</option>
+          </select></label>
           <nav class="project-tree" id="projectTree" aria-label="项目和图表">
             <div class="tree-skeleton" aria-label="正在载入项目">
               <span></span><span></span><span></span><span></span><span></span>
@@ -406,7 +410,9 @@
 
     <script src="./composition-geometry.js?v=20261015-4" defer></script>
     <script src="./composition-clipboard.js?v=20261014-5" defer></script>
-    <script src="./composition.js?v=20261015-4" defer></script>
-    <script src="./app.js?v=20261015-2" defer></script>
+    <script src="./composition-assets.js?v=20261016-1" defer></script>
+    <script src="./composition.js?v=20261016-1" defer></script>
+    <script src="./project-sorting.js?v=20261016-1" defer></script>
+    <script src="./app.js?v=20261016-1" defer></script>
   </body>
 </html>

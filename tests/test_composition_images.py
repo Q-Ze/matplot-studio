@@ -239,6 +239,57 @@ class CompositionImageTests(unittest.TestCase):
             self.assertEqual(response.media_type, "image/png")
             self.assertTrue(response.body.startswith(b"\x89PNG"))
 
+    def test_library_references_block_deletion_until_layout_is_saved_without_asset(self):
+        image = self.images.import_image(self.project,"used.svg",SVG)
+        other = self.images.import_image(self.project,"unused.pdf",pdf_bytes())
+        layouts = CompositionStore(self.store)
+        first = layouts.save(self.project,Composition(name="Figure 1",panels=[
+            {"image":image["id"],"row":1,"column":1}, {"image":image["id"],"row":1,"column":2}]))
+        second = layouts.save(self.project,Composition(name="Figure 2",panels=[{"image":image["id"],"row":1,"column":1}]))
+        library = {item["id"]:item for item in self.images.library(self.project)}
+        self.assertEqual({item["name"] for item in library[image["id"]]["used_by"]},{"Figure 1","Figure 2"})
+        self.assertEqual(len(library[image["id"]]["used_by"]),2)
+        self.assertEqual(library[other["id"]]["used_by"],[])
+        with self.assertRaises(StorageError) as blocked:
+            self.images.delete(self.project,image["id"])
+        self.assertEqual(blocked.exception.code,"image_in_use")
+        self.assertEqual(blocked.exception.status_code,409)
+        self.assertTrue(self.images.preview(self.project,image["id"]).startswith(b"\x89PNG"))
+        replacement = Composition(name="Figure 1",panels=[{"image":other["id"],"row":1,"column":1}])
+        layouts.save(self.project,replacement,first["id"],first["revision"])
+        layouts.delete(self.project,second["id"],second["revision"])
+        self.assertEqual(self.images.delete(self.project,image["id"]),{"id":image["id"],"name":"used.svg"})
+        self.assertEqual([item["id"] for item in self.images.list(self.project)],[other["id"]])
+        with self.assertRaises(StorageError):
+            layouts.save(self.project,Composition(name="Stale draft",panels=[{"image":image["id"],"row":1,"column":1}]))
+
+    def test_asset_deletion_routes_and_project_boundaries(self):
+        app = create_app(workspace=self.store.workspace)
+        endpoints = {route.name:route.endpoint for route in app.routes if hasattr(route,"endpoint")}
+        image = self.images.import_image(self.project,"unused.png",image_bytes())
+        other = self.store.create_project("Other")["id"]
+        with self.assertRaises(StorageError):
+            endpoints["delete_composition_image"](other,image["id"])
+        with self.assertRaises(StorageError):
+            endpoints["delete_composition_image"](self.project,"../outside")
+        self.assertEqual(endpoints["composition_image_library"](self.project)["images"],[{**image,"used_by":[]}])
+        result = endpoints["delete_composition_image"](self.project,image["id"])
+        self.assertEqual(result["deleted"]["id"],image["id"])
+        self.assertEqual(endpoints["composition_image_library"](self.project)["images"],[])
+        for reader in [self.images.read,self.images.preview,self.images.delete]:
+            with self.assertRaises(StorageError) as missing:
+                reader(self.project,image["id"])
+            self.assertEqual(missing.exception.status_code,404)
+
+    def test_delete_refuses_to_guess_when_a_saved_layout_is_corrupt(self):
+        image = self.images.import_image(self.project,"keep.png",image_bytes())
+        directory = self.store.project_path(self.project) / "compositions"
+        directory.mkdir()
+        (directory / "broken.json").write_text("not json")
+        with self.assertRaises(StorageError):
+            self.images.delete(self.project,image["id"])
+        self.assertEqual(self.images.read(self.project,image["id"])[0],image)
+
 
 if __name__ == "__main__":
     unittest.main()

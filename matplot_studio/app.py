@@ -122,6 +122,7 @@ def _plot_payload(document: PlotDocument) -> Dict[str, Any]:
         "plot": document.plot,
         "code": document.code,
         "revision": document.revision,
+        "modified_at": document.path.stat().st_mtime_ns // 1_000_000,
         "meta": document.contract.meta,
         "schema": document.contract.schema,
         "settings": document.contract.settings,
@@ -466,6 +467,14 @@ def create_app(
                                        filename: str = Query(..., min_length=1, max_length=200)):
         content = await _read_limited_body(request)
         return composition_images.import_image(project, filename, content)
+
+    @app.get("/api/projects/{project}/composition-images/library")
+    def composition_image_library(project: str):
+        return {"images": composition_images.library(project)}
+
+    @app.delete("/api/projects/{project}/composition-images/{image}")
+    def delete_composition_image(project: str, image: str):
+        return {"deleted": composition_images.delete(project, image)}
 
     @app.get("/api/projects/{project}/composition-images/{image}")
     def get_composition_image(project: str, image: str):

@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import shutil
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
@@ -132,6 +133,35 @@ class CompositionImages:
                 return []
             return [self.read(project, entry.name, include_content=False)[0] for entry in sorted(root.iterdir())
                     if entry.is_dir() and not entry.name.startswith(".")]
+
+    def _usage(self, project):
+        from .composition import CompositionStore
+
+        usage = {}
+        for saved in CompositionStore(self.store).list(project):
+            for image in {panel.get("image") for panel in saved["layout"]["panels"] if panel.get("image")}:
+                usage.setdefault(image, []).append({"id": saved["id"], "name": saved["layout"]["name"]})
+        return usage
+
+    def library(self, project):
+        with self.store._lock:
+            images = self.list(project)
+            usage = self._usage(project)
+            return [{**image, "used_by": usage.get(image["id"], [])} for image in images]
+
+    def delete(self, project, image):
+        with self.store._lock:
+            info, _ = self.read(project, image, include_content=False)
+            used_by = self._usage(project).get(image, [])
+            if used_by:
+                names = "、".join(item["name"] for item in used_by)
+                raise StorageError("image_in_use", f"示意图正在被拼图“{names}”使用，请先移除对应子图并保存拼图",
+                                   status_code=409, extra={"used_by": used_by})
+            source = self._path(project, image)
+            tombstone = self._directory(project) / f".delete-image-{uuid.uuid4().hex}"
+            os.replace(source, tombstone)
+            shutil.rmtree(tombstone, ignore_errors=True)
+            return {"id": image, "name": info["name"]}
 
     def import_image(self, project, filename, content):
         self._directory(project)

@@ -30,6 +30,26 @@
 }
 
 #compositionButton { color: var(--accent); border: 1px solid var(--line); white-space: nowrap; }
+.plot-sort { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 11px; color: var(--text-muted); }
+.plot-sort select { flex: 1; min-width: 0; padding: 6px; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--text); font-size: 11px; }
+.asset-library, .asset-preview { width: min(960px, 94vw); max-height: 90vh; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-panel); color: var(--text); }
+.asset-library::backdrop, .asset-preview::backdrop { background: #12212480; }
+.asset-library .composition-header, .asset-preview .composition-header { height: auto; min-height: 68px; }
+.asset-library h2, .asset-preview h2 { font-size: 18px; overflow-wrap: anywhere; }
+.asset-library__body { padding: 16px 20px; }
+.asset-library__controls { display: flex; gap: 10px; }
+.asset-library__controls input { flex: 1; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.asset-library__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; margin-top: 12px; }
+.asset-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.asset-card strong, .asset-card__usage { overflow-wrap: anywhere; font-size: 12px; }
+.asset-card p { margin: 0; }
+.asset-card__view { width: 100%; height: 150px; padding: 8px; background: var(--bg-subtle); border-radius: 5px; cursor: zoom-in; }
+.asset-card__view img { width: 100%; height: 100%; object-fit: contain; }
+.asset-card__usage { color: var(--text-muted); line-height: 1.5; }
+.asset-card__delete { color: var(--danger); align-self: flex-end; margin-top: auto; }
+.asset-library button:disabled { opacity: .45; cursor: default; }
+.asset-library .is-error { color: var(--danger); }
+.asset-preview > img { display: block; max-width: 100%; max-height: 72vh; margin: auto; object-fit: contain; padding: 16px; }
 .composition-dialog {
   width: min(1440px, 96vw); height: 94vh; max-width: none; max-height: none;
   padding: 0; border: 1px solid var(--line); border-radius: 12px; color: var(--text);

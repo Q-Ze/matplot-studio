@@ -949,6 +949,10 @@ def render(data, settings):
                         except Exception as exc:
                             plot_info["valid"] = False
                             plot_info["error"] = str(exc)
+                        try:
+                            plot_info["modified_at"] = source_path.stat().st_mtime_ns // 1_000_000
+                        except OSError:
+                            plot_info["modified_at"] = None
                         plots.append(plot_info)
                 project_info: Dict[str, Any] = {"id": child.name, "name": child.name}
                 project_info.update({key: value for key, value in meta.items() if key != "plots"})

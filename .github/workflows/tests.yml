@@ -27,6 +27,8 @@ jobs:
         run: |
           node --test tests/test_composition_geometry.cjs
           node --test tests/test_composition_clipboard.cjs
+          node --test tests/test_project_sorting.cjs
           node --check web/app.js
           node --check web/composition.js
           node --check web/composition-clipboard.js
+          node --check web/composition-assets.js

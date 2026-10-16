@@ -7,7 +7,7 @@
   dialog.innerHTML = `
     <header class="composition-header">
       <div><span class="eyebrow" id="compositionProject"></span><h2 id="compositionTitle">科研拼图</h2></div>
-      <div class="composition-actions"><button type="button" class="button button--quiet" data-action="new">新建拼图</button>
+      <div class="composition-actions"><button type="button" class="button button--quiet" data-action="manage-images">管理示意图</button><button type="button" class="button button--quiet" data-action="new">新建拼图</button>
       <button type="button" class="button button--primary" data-action="save">保存拼图</button>
       <button type="button" class="button button--quiet" data-action="close" aria-label="关闭拼图编辑器">关闭</button></div>
     </header>
@@ -71,6 +71,7 @@
   let importedImages = [];
   const { panelBox, fittedHeight, imageBox, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = window.CompositionGeometry;
   const clipboard = window.CompositionClipboard;
+  const assetManager = window.CompositionAssets.create();
   const defaults = () => ({ name: "Figure 1", width_mm: 180, height_mm: 140, rows: 2, columns: 2,
     margin_mm: 4, gap_mm: 3, row_width_ratios: [], row_height_ratios: [], labels: "lower", label_size: 10, source_bounds: "tight", panels: [] });
   const baseUrl = () => `/api/projects/${encodeURIComponent(project.id)}/compositions`;
@@ -457,6 +458,10 @@
       }, true); return;
     }
     const action = button.dataset.action;
+    if (action === "manage-images") run(() => assetManager.open({
+      project, request, isInDraft: id => layout.panels.some(panel => panel.image === id),
+      afterDelete: id => { importedImages = importedImages.filter(image => image.id !== id); renderPanels(); },
+    }));
     if (action === "paste") run(pasteFromClipboard);
     if (action === "copy") run(copyComposition, true);
     if (action === "import-image") {
