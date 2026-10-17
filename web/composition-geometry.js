@@ -74,7 +74,10 @@
     const height = width / ratio;
     return { x: (box.width - width) / 2, y: (box.height - height) / 2, width, height };
   }
-  function labelPosition(box, ratio, panel) {
+  function labelPosition(box, ratio, panel, layout = {}) {
+    if (layout.label_position_mode === "aligned") {
+      return { x: 1 + (layout.label_offset_x_mm || 0), y: 1 + (layout.label_offset_y_mm || 0) };
+    }
     const visible = imageBox(box, ratio);
     return { x: visible.x + 1 + (panel.label_offset_x_mm || 0), y: visible.y + 1 + (panel.label_offset_y_mm || 0) };
   }

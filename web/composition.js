@@ -21,6 +21,17 @@
         </div>
         <div class="composition-presets"><button type="button" data-width="85">单栏 85 mm</button><button type="button" data-width="180">双栏 180 mm</button></div>
         <button type="button" class="button button--quiet composition-fit" data-action="fit">按原图比例适配高度</button>
+        <section class="composition-label-settings" aria-label="统一子图编号">
+          <strong>统一子图编号</strong>
+          <div class="composition-pair">
+            <label class="form-field"><span>子图标注</span><select data-field="labels"><option value="lower">a, b, c</option><option value="upper">A, B, C</option><option value="parentheses">(a), (b), (c)</option><option value="custom">自定义</option><option value="none">不显示</option></select></label>
+            <label class="form-field"><span>标注字号 · pt</span><input data-field="label_size" type="number" min="6" max="24" step="0.5" required></label>
+            <label class="form-field"><span>统一横移 · mm</span><input data-field="label_offset_x_mm" type="number" min="-400" max="400" step="0.1" required></label>
+            <label class="form-field"><span>统一纵移 · mm</span><input data-field="label_offset_y_mm" type="number" min="-400" max="400" step="0.1" required></label>
+          </div>
+          <button type="button" class="button button--quiet" data-action="align-labels">统一对齐标号</button>
+          <p class="composition-hint" id="compositionLabelHint"></p>
+        </section>
         <div class="composition-pair">
           <label class="form-field"><span>行数</span><input data-field="rows" type="number" min="1" max="6" required></label>
           <label class="form-field"><span>列数</span><input data-field="columns" type="number" min="1" max="6" required></label>
@@ -32,10 +43,6 @@
           <div id="compositionWidthRatios"></div>
           <p class="composition-hint">行高从上到下填写，如 2:1；每行宽度从左到右填写，如 5:4:3。先扣除边距和间距，再按比例分配。同一行区域等高，原图等比缩放、允许留白。</p>
         </section>
-        <div class="composition-pair">
-          <label class="form-field"><span>子图标注</span><select data-field="labels"><option value="lower">a, b, c</option><option value="upper">A, B, C</option><option value="parentheses">(a), (b), (c)</option><option value="custom">自定义</option><option value="none">不显示</option></select></label>
-          <label class="form-field"><span>标注字号 · pt</span><input data-field="label_size" type="number" min="6" max="24" step="0.5" required></label>
-        </div>
         <label class="form-field"><span>原图边界</span><select data-field="source_bounds"><option value="tight">裁去原图外部留白</option><option value="canvas">保留原图完整画布</option></select></label>
         <p class="composition-hint">编辑画布自动载入真实子图并保持比例。适配高度会保留当前宽度和网格，尽量减少上下留白。</p>
         <button type="button" class="button button--quiet composition-delete" data-action="delete">删除此拼图</button>
@@ -73,7 +80,8 @@
   const clipboard = window.CompositionClipboard;
   const assetManager = window.CompositionAssets.create();
   const defaults = () => ({ name: "Figure 1", width_mm: 180, height_mm: 140, rows: 2, columns: 2,
-    margin_mm: 4, gap_mm: 3, row_width_ratios: [], row_height_ratios: [], labels: "lower", label_size: 10, source_bounds: "tight", panels: [] });
+    margin_mm: 4, gap_mm: 3, row_width_ratios: [], row_height_ratios: [], labels: "lower", label_size: 10,
+    label_position_mode: "aligned", label_offset_x_mm: 0, label_offset_y_mm: 0, source_bounds: "tight", panels: [] });
   const baseUrl = () => `/api/projects/${encodeURIComponent(project.id)}/compositions`;
   const imagesUrl = () => `/api/projects/${encodeURIComponent(project.id)}/composition-images`;
   const sourceKey = (panel) => panel.image ? `image:${panel.image}` : `plot:${panel.plot}`;
@@ -100,6 +108,7 @@
     setMode("edit");
     drawGrid();
     updateWidthSummaries();
+    updateLabelSettings();
   }
   function setMode(value) {
     mode = value;
@@ -195,7 +204,7 @@
       const source = thumbnail(panel);
       label.hidden = source.state !== "ready" || !labelFor(index);
       if (source.state === "ready") {
-        const anchor = labelPosition(box, source.ratio, panel);
+        const anchor = labelPosition(box, source.ratio, panel, layout);
         label.style.left = `${100 * anchor.x / box.width}%`;
         label.style.top = `${100 * anchor.y / box.height}%`;
         const img = document.createElement("img"); img.src = source.url; img.alt = title; img.draggable = false;
@@ -252,32 +261,20 @@
       skip.setAttribute("aria-label", `子图 ${index + 1} 跳过标号`);
       skipLabel.append(skip, node("span", "跳过标号"), node("small", "不显示标号，也不占用字母顺序，可与前一张子图共用标号。"));
       row.append(skipLabel);
-      const placement = node("details", "", "composition-label-placement");
-      placement.open = Boolean(panel.label_offset_x_mm || panel.label_offset_y_mm);
-      const summary = node("summary", `子图 ${index + 1} 标号位置`);
-      const controls = node("div", "", "composition-label-placement__controls");
-      const offsets = [];
-      for (const [key, title] of [["label_offset_x_mm", "横移 · mm"], ["label_offset_y_mm", "纵移 · mm"]]) {
-        const wrapper = node("label", title), input = document.createElement("input");
-        input.type = "number"; input.min = -400; input.max = 400; input.step = 0.1; input.required = true;
-        input.value = panel[key] || 0; input.disabled = layout.labels === "none" || panel.skip_label;
-        input.setAttribute("aria-label", `子图 ${index + 1} 标号${title}`);
-        input.addEventListener("input", () => { panel[key] = Number(input.value); invalidate(); });
-        wrapper.append(input); controls.append(wrapper); offsets.push({ key, input });
-      }
-      const reset = node("button", "复位"); reset.type = "button"; reset.disabled = layout.labels === "none" || panel.skip_label;
-      reset.setAttribute("aria-label", `复位子图 ${index + 1} 标号位置`);
-      reset.addEventListener("click", () => { offsets.forEach(({ key, input }) => { panel[key] = 0; input.value = 0; }); invalidate(); });
       skip.addEventListener("change", () => {
         panel.skip_label = skip.checked;
-        offsets.forEach(({ input }) => { input.disabled = layout.labels === "none" || panel.skip_label; });
-        reset.disabled = layout.labels === "none" || panel.skip_label;
         customLabelInput.disabled = layout.labels !== "custom" || panel.skip_label;
         invalidate();
       });
-      controls.append(reset, node("span", "右移、下移填正数；左移、上移填负数。标号浮于所有子图上方，可跨子图移动，但不能超出整张拼图。"));
-      placement.append(summary, controls); row.append(placement); container.append(row);
+      container.append(row);
     });
+  }
+  function updateLabelSettings() {
+    const aligned = layout.label_position_mode === "aligned";
+    $('[data-action="align-labels"]').textContent = aligned ? "复位统一位置" : "统一对齐标号";
+    $("#compositionLabelHint").textContent = aligned
+      ? "以各子图区域左上角为基准，同一行标号等高。横移、纵移统一应用；正数向右、向下。标号可跨子图，但不能超出整张拼图。"
+      : "此拼图保留原有标号位置。点击“统一对齐标号”或调整统一横移、纵移，即可让全部标号按子图区域对齐。";
   }
   function updateWidthSummaries() {
     const heights = rowHeights(layout);
@@ -461,6 +458,7 @@
   function close() { if (busy || !canDiscard()) return; if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = null; clearThumbnails(); dialog.close(); }
   fields.forEach((field) => field.addEventListener("input", () => {
     layout[field.dataset.field] = field.type === "number" ? Number(field.value) : field.value;
+    if (["label_offset_x_mm", "label_offset_y_mm"].includes(field.dataset.field)) layout.label_position_mode = "aligned";
     if (["rows", "columns"].includes(field.dataset.field)) { resizeWidthRatios(); renderWidthRatios(); }
     if (field.dataset.field === "rows") renderHeightRatios();
     if (field.dataset.field === "labels") renderPanels(); invalidate();
@@ -486,6 +484,13 @@
       }, true); return;
     }
     const action = button.dataset.action;
+    if (action === "align-labels") {
+      layout.label_position_mode = "aligned";
+      layout.label_offset_x_mm = layout.label_offset_y_mm = 0;
+      $('[data-field="label_offset_x_mm"]').value = 0;
+      $('[data-field="label_offset_y_mm"]').value = 0;
+      invalidate();
+    }
     if (action === "manage-images") run(() => assetManager.open({
       project, request, isInDraft: id => layout.panels.some(panel => panel.image === id),
       afterDelete: id => { importedImages = importedImages.filter(image => image.id !== id); renderPanels(); },

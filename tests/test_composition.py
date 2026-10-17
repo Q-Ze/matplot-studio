@@ -305,8 +305,63 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual(error.exception.code, "label_out_of_bounds")
             self.assertIn("整张拼图", str(error.exception))
 
+    def test_unified_labels_align_mixed_artwork_and_move_together(self):
+        other = self.store.create_plot(self.project, "Tall panel")
+        renderer = Mock()
+        sources = []
+        for width, height in [(200, 50), (50, 200)]:
+            with pymupdf.open() as source:
+                page = source.new_page(width=width, height=height)
+                page.draw_rect(page.rect, fill=(0.6, 0.8, 1), color=None)
+                sources.append(source.tobytes())
+        renderer.export_image.side_effect = lambda path, *args, **kwargs: RenderResult(
+            True, "source", 0, svg=sources[0 if path == self.plot.path else 1])
+        layout = Composition(name="Unified labels", width_mm=120, height_mm=100,
+                             rows=2, columns=2, row_height_ratios=[2, 1], labels="upper",
+                             label_position_mode="aligned", panels=[
+            {"plot": self.plot.plot if i % 2 == 0 else other.plot,
+             "row": i // 2 + 1, "column": i % 2 + 1,
+             "label_offset_x_mm": -100 if i % 2 else 100,
+             "label_offset_y_mm": i * 10} for i in range(4)])
+        def inspect():
+            with pymupdf.open(stream=render_composition(self.store, renderer, self.project, layout, "pdf"), filetype="pdf") as doc:
+                return ([doc[0].search_for(label)[0] for label in "ABCD"],
+                        [tuple(drawing["rect"]) for drawing in doc[0].get_drawings()])
+        before, artwork = inspect()
+        for a, b in [(0, 1), (2, 3)]:
+            self.assertAlmostEqual(before[a].y0, before[b].y0, places=4)
+        for a, b in [(0, 2), (1, 3)]:
+            self.assertAlmostEqual(before[a].x0, before[b].x0, places=4)
+        layout.label_offset_x_mm, layout.label_offset_y_mm = 8, 2
+        after, moved_artwork = inspect()
+        self.assertEqual(artwork, moved_artwork)
+        for a, b in zip(before, after):
+            self.assertAlmostEqual(b.x0 - a.x0, 8 * 72 / 25.4, places=3)
+            self.assertAlmostEqual(b.y0 - a.y0, 2 * 72 / 25.4, places=3)
+        layout.panels[1].skip_label = True
+        saved = self.saved.save(self.project, layout)
+        restored = Composition.model_validate(self.saved.read(self.project, saved["id"])["layout"])
+        self.assertEqual(restored.label_position_mode, "aligned")
+        self.assertEqual((restored.label_offset_x_mm, restored.label_offset_y_mm), (8, 2))
+        self.assertTrue(restored.panels[1].skip_label)
+        with pymupdf.open(stream=render_composition(self.store, renderer, self.project, restored, "pdf"), filetype="pdf") as doc:
+            self.assertEqual(doc[0].get_text().split(), ["A", "B", "C"])
+        self.assertIn(b"<path", render_composition(self.store, renderer, self.project, restored, "svg"))
+        self.assertTrue(render_composition(self.store, renderer, self.project, restored, "png", 72).startswith(b"\x89PNG"))
+        layout.label_offset_x_mm = -10
+        with self.assertRaises(StorageError) as error:
+            render_composition(self.store, renderer, self.project, layout, "pdf")
+        self.assertEqual(error.exception.code, "label_out_of_bounds")
+
     def test_label_offsets_validate_and_default_for_old_layouts(self):
         data = self.layout.model_dump()
+        for key in ["label_position_mode", "label_offset_x_mm", "label_offset_y_mm"]:
+            del data[key]
+        self.assertEqual(Composition.model_validate(data).label_position_mode, "legacy")
+        for key in ["label_offset_x_mm", "label_offset_y_mm"]:
+            for value in [float("nan"), float("inf"), 401, -401]:
+                with self.assertRaises(ValidationError):
+                    Composition.model_validate({**data, key: value})
         for panel in data["panels"]:
             del panel["label_offset_x_mm"],panel["label_offset_y_mm"]
         self.assertEqual(Composition.model_validate(data).panels[0].label_offset_x_mm,0)

@@ -48,6 +48,10 @@ class Composition(BaseModel):
     row_height_ratios: list[Annotated[float, Field(gt=0, le=1000)]] = Field(default_factory=list, max_length=6)
     labels: Literal["lower", "upper", "parentheses", "custom", "none"] = "lower"
     label_size: float = Field(default=10, ge=6, le=24)
+    # Missing mode preserves the appearance of previously saved compositions.
+    label_position_mode: Literal["legacy", "aligned"] = "legacy"
+    label_offset_x_mm: float = Field(default=0, ge=-400, le=400)
+    label_offset_y_mm: float = Field(default=0, ge=-400, le=400)
     source_bounds: Literal["canvas", "tight"] = "tight"
     panels: list[Panel] = Field(min_length=1, max_length=16)
 
@@ -226,10 +230,14 @@ def render_composition(store, renderer, project, layout, output_format="svg", dp
                         page.show_pdf_page(pymupdf.Rect(x, y, x + w, y + h), source, 0,
                                            keep_proportion=True)
             if label:
-                inset = pt  # 1 mm inside the visible image, without reserving layout space.
+                inset = pt  # 1 mm inset, without reserving layout space.
                 label_width = pymupdf.get_text_length(label, fontname="hebo", fontsize=layout.label_size)
-                label_x = image_x + inset + panel.label_offset_x_mm * pt
-                label_y = image_y + inset + layout.label_size + panel.label_offset_y_mm * pt
+                if layout.label_position_mode == "aligned":
+                    label_x = x + inset + layout.label_offset_x_mm * pt
+                    label_y = y + inset + layout.label_size + layout.label_offset_y_mm * pt
+                else:
+                    label_x = image_x + inset + panel.label_offset_x_mm * pt
+                    label_y = image_y + inset + layout.label_size + panel.label_offset_y_mm * pt
                 font = pymupdf.Font("hebo")
                 if (label_x < 0 or label_x + label_width > width or
                     label_y - font.ascender * layout.label_size < 0 or

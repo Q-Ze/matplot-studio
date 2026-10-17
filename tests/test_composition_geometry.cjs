@@ -114,6 +114,19 @@ test("per-panel label offsets respect letterboxing without changing layout or fi
   assert.equal(fittedHeight(adjusted,[2,1]),fittedHeight(base,[2,1]));
 });
 
+test("unified offsets align panel regions regardless of image ratio and old individual offsets", () => {
+  const layout = {...base, label_position_mode:"aligned", label_offset_x_mm:8, label_offset_y_mm:2};
+  const panel = {label_offset_x_mm:-40, label_offset_y_mm:30};
+  for (const ratio of [0.25, 1, 4]) {
+    for (const box of [{width:40,height:80},{width:80,height:40}]) {
+      assert.deepEqual(labelPosition(box,ratio,panel,layout),{x:9,y:3});
+    }
+  }
+  assert.deepEqual(labelPosition({width:40,height:80},0.5,panel,{label_position_mode:"aligned"}),{x:1,y:1});
+  assert.deepEqual(panelBox(layout,base.panels[0]),panelBox(base,base.panels[0]));
+  assert.equal(fittedHeight(layout,[2,1]),fittedHeight(base,[2,1]));
+});
+
 test("skipped panels hide labels without consuming letters or erasing custom text", () => {
   const layout={...base,labels:"upper",panels:[{}, {skip_label:true,label:"Shared A"}, {}, {}]};
   const labels=()=>layout.panels.map((_,index)=>panelLabel(layout,index));
