@@ -263,12 +263,57 @@ class CompositionTests(unittest.TestCase):
             render_composition(self.store,renderer,self.project,Composition.model_validate(moved),"pdf")
         self.assertEqual(error.exception.code,"label_out_of_bounds")
 
+    def test_labels_cross_panels_and_stay_above_all_artwork(self):
+        renderer = Mock()
+        with pymupdf.open() as source:
+            page = source.new_page(width=100, height=100)
+            page.draw_rect(page.rect, fill=(0.6, 0.8, 1), color=None)
+            renderer.export_image.return_value = RenderResult(True, "source", 0, svg=source.tobytes())
+        layout = Composition(name="Floating labels", width_mm=60, height_mm=30,
+                             margin_mm=0, gap_mm=0, rows=1, columns=2, labels="upper", panels=[
+            {"plot": self.plot.plot, "row": 1, "column": 1, "label_offset_x_mm": 32},
+            {"plot": self.plot.plot, "row": 1, "column": 2, "label_offset_x_mm": -25}])
+        with pymupdf.open(stream=render_composition(self.store, renderer, self.project, layout, "pdf"), filetype="pdf") as doc:
+            page = doc[0]
+            a, b = page.search_for("A")[0], page.search_for("B")[0]
+            self.assertGreater(a.x0, page.rect.width / 2)
+            self.assertLess(b.x1, page.rect.width / 2)
+            self.assertEqual(len(page.get_drawings()), 2)
+            for rect in [a, b]:
+                self.assertTrue(page.rect.contains(rect))
+                pix = page.get_pixmap(clip=rect, matrix=pymupdf.Matrix(2, 2))
+                self.assertTrue(any(max(pix.samples[i:i + 3]) < 80 for i in range(0, len(pix.samples), 3)))
+        self.assertIn(b"<path", render_composition(self.store, renderer, self.project, layout, "svg"))
+        self.assertTrue(render_composition(self.store, renderer, self.project, layout, "png", 72).startswith(b"\x89PNG"))
+        # A custom label may be wider than its source panel when it fits the page.
+        layout.labels = "custom"
+        layout.panels[0].label = "Wide shared label"
+        layout.panels[0].label_offset_x_mm = 0
+        layout.label_size = 16
+        with pymupdf.open(stream=render_composition(self.store, renderer, self.project, layout, "pdf"), filetype="pdf") as doc:
+            rect = doc[0].search_for("Wide shared label")[0]
+            self.assertGreater(rect.width, doc[0].rect.width / 2)
+            self.assertTrue(doc[0].rect.contains(rect))
+        # All four outer edges still protect the full text from being clipped.
+        layout.labels = "upper"
+        layout.label_size = 10
+        for dx, dy in [(-2, 0), (59, 0), (0, -2), (0, 29)]:
+            layout.panels[0].label_offset_x_mm = dx
+            layout.panels[0].label_offset_y_mm = dy
+            with self.subTest(dx=dx, dy=dy), self.assertRaises(StorageError) as error:
+                render_composition(self.store, renderer, self.project, layout, "pdf")
+            self.assertEqual(error.exception.code, "label_out_of_bounds")
+            self.assertIn("整张拼图", str(error.exception))
+
     def test_label_offsets_validate_and_default_for_old_layouts(self):
         data = self.layout.model_dump()
         for panel in data["panels"]:
             del panel["label_offset_x_mm"],panel["label_offset_y_mm"]
         self.assertEqual(Composition.model_validate(data).panels[0].label_offset_x_mm,0)
-        for value in [float("nan"),float("inf"),41,-41]:
+        for value in [-400, -80, 80, 400]:
+            data["panels"][0]["label_offset_x_mm"] = value
+            self.assertEqual(Composition.model_validate(data).panels[0].label_offset_x_mm, value)
+        for value in [float("nan"),float("inf"),401,-401]:
             data["panels"][0]["label_offset_y_mm"] = value
             with self.assertRaises(ValidationError):
                 Composition.model_validate(data)

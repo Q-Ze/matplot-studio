@@ -85,11 +85,11 @@
 .composition-status { min-height: 20px; margin: 10px 20px; color: var(--text-soft); font-size: 12px; }
 .composition-status.is-error { color: var(--danger); }
 .composition-preview { padding: 12px 26px 24px; min-height: 260px; display: flex; justify-content: center; align-items: center; overflow: auto; }
-#compositionGrid { position: relative; container-type: inline-size; flex: none; width: min(100%, 680px); background: white; box-shadow: 0 2px 12px #17232618; }
+#compositionGrid { position: relative; container-type: inline-size; overflow: hidden; flex: none; width: min(100%, 680px); background: white; box-shadow: 0 2px 12px #17232618; }
 .composition-cell { position: absolute; border: 1px dashed var(--line-strong); color: var(--text-muted); font-size: 11px; padding: 5px; }
-.composition-tile { position: absolute; background: white; outline: 1px solid #9dbfb6; overflow: hidden; cursor: grab; }
+.composition-tile { position: absolute; background: white; outline: 1px solid #9dbfb6; cursor: grab; }
 .composition-tile:hover { outline: 2px solid var(--accent); }
-.composition-tile b { position: absolute; z-index: 1; display: block; color: black; font-family: Arial, sans-serif; line-height: 1; pointer-events: none; }
+.composition-tile b { position: absolute; z-index: 1; display: block; white-space: nowrap; color: black; font-family: Arial, sans-serif; line-height: 1; pointer-events: none; }
 .composition-artwork { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 .composition-artwork img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .composition-artwork span { padding: 8px; overflow-wrap: anywhere; text-align: center; color: var(--text-muted); font-size: 11px; }

@@ -24,8 +24,8 @@ class Panel(BaseModel):
     colspan: int = Field(default=1, ge=1, le=6, strict=True)
     label: str = Field(default="", max_length=16, pattern=r"^[\x20-\x7e]*$")
     skip_label: bool = Field(default=False, strict=True)
-    label_offset_x_mm: float = Field(default=0, ge=-40, le=40)
-    label_offset_y_mm: float = Field(default=0, ge=-40, le=40)
+    label_offset_x_mm: float = Field(default=0, ge=-400, le=400)
+    label_offset_y_mm: float = Field(default=0, ge=-400, le=400)
 
     @model_validator(mode="after")
     def one_source(self):
@@ -202,6 +202,7 @@ def render_composition(store, renderer, project, layout, output_format="svg", dp
     width, height = layout.width_mm * pt, layout.height_mm * pt
     with PDF_LOCK, pymupdf.open() as output:
         page = output.new_page(width=width, height=height)
+        labels = []
         for index, panel in enumerate(layout.panels):
             x, y, w, h = (value * pt for value in layout.panel_box(panel))
             label = layout.panel_label(index)
@@ -227,17 +228,18 @@ def render_composition(store, renderer, project, layout, output_format="svg", dp
             if label:
                 inset = pt  # 1 mm inside the visible image, without reserving layout space.
                 label_width = pymupdf.get_text_length(label, fontname="hebo", fontsize=layout.label_size)
-                if label_width > w - 2 * inset:
-                    raise StorageError("label_too_wide", "自定义标注超出子图宽度，请缩短标注", status_code=422)
                 label_x = image_x + inset + panel.label_offset_x_mm * pt
                 label_y = image_y + inset + layout.label_size + panel.label_offset_y_mm * pt
                 font = pymupdf.Font("hebo")
-                if (label_x < x or label_x + label_width > x + w or
-                    label_y - font.ascender * layout.label_size < y or
-                    label_y - font.descender * layout.label_size > y + h):
-                    raise StorageError("label_out_of_bounds", f"子图 {label} 的标号超出子图区域，请调整横移、纵移或字号", status_code=422)
-                page.insert_text((label_x, label_y), label,
-                                 fontsize=layout.label_size, fontname="hebo", overlay=True)
+                if (label_x < 0 or label_x + label_width > width or
+                    label_y - font.ascender * layout.label_size < 0 or
+                    label_y - font.descender * layout.label_size > height):
+                    raise StorageError("label_out_of_bounds", f"子图 {label} 的标号超出整张拼图范围，请调整横移、纵移或字号", status_code=422)
+                labels.append((label_x, label_y, label))
+        # Draw all labels last so later panels cannot cover labels crossing into them.
+        for label_x, label_y, label in labels:
+            page.insert_text((label_x, label_y), label,
+                             fontsize=layout.label_size, fontname="hebo", overlay=True)
         if output_format == "pdf":
             return output.tobytes(garbage=4, deflate=True)
         if output_format == "svg":

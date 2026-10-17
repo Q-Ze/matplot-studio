@@ -259,7 +259,7 @@
       const offsets = [];
       for (const [key, title] of [["label_offset_x_mm", "横移 · mm"], ["label_offset_y_mm", "纵移 · mm"]]) {
         const wrapper = node("label", title), input = document.createElement("input");
-        input.type = "number"; input.min = -40; input.max = 40; input.step = 0.1; input.required = true;
+        input.type = "number"; input.min = -400; input.max = 400; input.step = 0.1; input.required = true;
         input.value = panel[key] || 0; input.disabled = layout.labels === "none" || panel.skip_label;
         input.setAttribute("aria-label", `子图 ${index + 1} 标号${title}`);
         input.addEventListener("input", () => { panel[key] = Number(input.value); invalidate(); });
@@ -275,7 +275,7 @@
         customLabelInput.disabled = layout.labels !== "custom" || panel.skip_label;
         invalidate();
       });
-      controls.append(reset, node("span", "右移、下移填正数；左移、上移填负数。仅移动标号，可避开轴标题。"));
+      controls.append(reset, node("span", "右移、下移填正数；左移、上移填负数。标号浮于所有子图上方，可跨子图移动，但不能超出整张拼图。"));
       placement.append(summary, controls); row.append(placement); container.append(row);
     });
   }
