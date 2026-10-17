@@ -224,6 +224,55 @@ class CompositionTests(unittest.TestCase):
         layout.update(width_mm=30, height_mm=30, margin_mm=0, gap_mm=0, rows=3, columns=3, label_size=24)
         self.assertEqual(Composition.model_validate(layout).height_mm, 30)
 
+    def test_label_offsets_avoid_long_ylabel_without_moving_artwork(self):
+        renderer = Mock()
+        ylabel = "Share of literature"
+        with pymupdf.open() as source:
+            height = pymupdf.get_text_length(ylabel, fontname="helv", fontsize=12) + 2
+            page = source.new_page(width=200, height=height)
+            page.draw_rect(page.rect, fill=(0.9,0.95,1), color=None)
+            page.insert_text((14,height-1),ylabel,fontsize=12,rotate=90)
+            renderer.export_image.return_value = RenderResult(True,"source",0,svg=source.tobytes())
+        layout = Composition(name="Label placement",width_mm=180,height_mm=100,rows=1,columns=2,labels="upper",panels=[
+            {"plot":self.plot.plot,"row":1,"column":1}, {"plot":self.plot.plot,"row":1,"column":2}])
+        def inspect(configured):
+            with pymupdf.open(stream=render_composition(self.store,renderer,self.project,configured,"pdf"),filetype="pdf") as document:
+                page = document[0]
+                spans = [span for block in page.get_text("dict")["blocks"] if "lines" in block
+                         for line in block["lines"] for span in line["spans"]]
+                return ({text:pymupdf.Rect(next(span["bbox"] for span in spans if span["text"]==text)) for text in ["A","B"]},
+                        page.search_for(ylabel),[tuple(drawing["rect"]) for drawing in page.get_drawings()])
+        before, before_labels, before_artwork = inspect(layout)
+        self.assertTrue(before["A"].intersects(before_labels[0]))
+        moved = layout.model_dump()
+        moved["panels"][0].update(label_offset_x_mm=8,label_offset_y_mm=2)
+        configured = Composition.model_validate(moved)
+        after, after_labels, after_artwork = inspect(configured)
+        self.assertFalse(after["A"].intersects(after_labels[0]))
+        self.assertAlmostEqual(after["A"].x0-before["A"].x0,8*72/25.4,places=3)
+        self.assertAlmostEqual(after["A"].y0-before["A"].y0,2*72/25.4,places=3)
+        self.assertEqual(after["B"],before["B"])
+        self.assertEqual(after_labels,before_labels)
+        self.assertEqual(after_artwork,before_artwork)
+        saved = self.saved.save(self.project,configured)
+        self.assertEqual(self.saved.read(self.project,saved["id"])["layout"]["panels"][0]["label_offset_x_mm"],8)
+        self.assertIn(b"<path",render_composition(self.store,renderer,self.project,configured,"svg"))
+        self.assertTrue(render_composition(self.store,renderer,self.project,configured,"png",72).startswith(b"\x89PNG"))
+        moved["panels"][0]["label_offset_x_mm"] = -40
+        with self.assertRaises(StorageError) as error:
+            render_composition(self.store,renderer,self.project,Composition.model_validate(moved),"pdf")
+        self.assertEqual(error.exception.code,"label_out_of_bounds")
+
+    def test_label_offsets_validate_and_default_for_old_layouts(self):
+        data = self.layout.model_dump()
+        for panel in data["panels"]:
+            del panel["label_offset_x_mm"],panel["label_offset_y_mm"]
+        self.assertEqual(Composition.model_validate(data).panels[0].label_offset_x_mm,0)
+        for value in [float("nan"),float("inf"),41,-41]:
+            data["panels"][0]["label_offset_y_mm"] = value
+            with self.assertRaises(ValidationError):
+                Composition.model_validate(data)
+
 
 if __name__ == "__main__":
     unittest.main()

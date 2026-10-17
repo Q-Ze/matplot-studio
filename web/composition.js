@@ -69,7 +69,7 @@
   let mode = "edit", thumbnailSession = 0, thumbnailQueue = Promise.resolve();
   const thumbnails = new Map();
   let importedImages = [];
-  const { panelBox, fittedHeight, imageBox, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = window.CompositionGeometry;
+  const { panelBox, fittedHeight, labelPosition, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = window.CompositionGeometry;
   const clipboard = window.CompositionClipboard;
   const assetManager = window.CompositionAssets.create();
   const defaults = () => ({ name: "Figure 1", width_mm: 180, height_mm: 140, rows: 2, columns: 2,
@@ -198,9 +198,9 @@
       const source = thumbnail(panel);
       label.hidden = source.state !== "ready";
       if (source.state === "ready") {
-        const visible = imageBox(box, source.ratio);
-        label.style.left = `${100 * (visible.x + 1) / box.width}%`;
-        label.style.top = `${100 * (visible.y + 1) / box.height}%`;
+        const anchor = labelPosition(box, source.ratio, panel);
+        label.style.left = `${100 * anchor.x / box.width}%`;
+        label.style.top = `${100 * anchor.y / box.height}%`;
         const img = document.createElement("img"); img.src = source.url; img.alt = title; img.draggable = false;
         artwork.append(img);
       } else {
@@ -248,7 +248,25 @@
       up.type = remove.type = "button"; up.title = "上移标注顺序"; up.setAttribute("aria-label", `上移子图 ${index + 1} 的标注顺序`); up.disabled = index === 0;
       up.addEventListener("click", () => { [layout.panels[index - 1], layout.panels[index]] = [panel, layout.panels[index - 1]]; renderPanels(); invalidate(); });
       remove.addEventListener("click", () => { layout.panels.splice(index, 1); renderPanels(); invalidate(); });
-      row.append(up, remove); container.append(row);
+      row.append(up, remove);
+      const placement = node("details", "", "composition-label-placement");
+      placement.open = Boolean(panel.label_offset_x_mm || panel.label_offset_y_mm);
+      const summary = node("summary", `子图 ${index + 1} 标号位置`);
+      const controls = node("div", "", "composition-label-placement__controls");
+      const offsets = [];
+      for (const [key, title] of [["label_offset_x_mm", "横移 · mm"], ["label_offset_y_mm", "纵移 · mm"]]) {
+        const wrapper = node("label", title), input = document.createElement("input");
+        input.type = "number"; input.min = -40; input.max = 40; input.step = 0.1; input.required = true;
+        input.value = panel[key] || 0; input.disabled = layout.labels === "none";
+        input.setAttribute("aria-label", `子图 ${index + 1} 标号${title}`);
+        input.addEventListener("input", () => { panel[key] = Number(input.value); invalidate(); });
+        wrapper.append(input); controls.append(wrapper); offsets.push({ key, input });
+      }
+      const reset = node("button", "复位"); reset.type = "button"; reset.disabled = layout.labels === "none";
+      reset.setAttribute("aria-label", `复位子图 ${index + 1} 标号位置`);
+      reset.addEventListener("click", () => { offsets.forEach(({ key, input }) => { panel[key] = 0; input.value = 0; }); invalidate(); });
+      controls.append(reset, node("span", "右移、下移填正数；左移、上移填负数。仅移动标号，可避开轴标题。"));
+      placement.append(summary, controls); row.append(placement); container.append(row);
     });
   }
   function updateWidthSummaries() {

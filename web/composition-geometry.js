@@ -74,7 +74,11 @@
     const height = width / ratio;
     return { x: (box.width - width) / 2, y: (box.height - height) / 2, width, height };
   }
-  const geometry = { panelBox, fittedHeight, imageBox, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights };
+  function labelPosition(box, ratio, panel) {
+    const visible = imageBox(box, ratio);
+    return { x: visible.x + 1 + (panel.label_offset_x_mm || 0), y: visible.y + 1 + (panel.label_offset_y_mm || 0) };
+  }
+  const geometry = { panelBox, fittedHeight, imageBox, labelPosition, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights };
   if (typeof module !== "undefined" && module.exports) module.exports = geometry;
   else root.CompositionGeometry = geometry;
 })(typeof window !== "undefined" ? window : globalThis);

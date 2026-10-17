@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { panelBox, fittedHeight, imageBox, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = require("../web/composition-geometry.js");
+const { panelBox, fittedHeight, imageBox, labelPosition, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = require("../web/composition-geometry.js");
 
 const base = { width_mm: 180, height_mm: 140, rows: 2, columns: 2,
   margin_mm: 4, gap_mm: 3, labels: "lower", label_size: 10,
@@ -102,6 +102,16 @@ test("label visibility and font size do not change fitted height or image placem
 test("overlay anchors follow the visible image even with horizontal or vertical letterboxing", () => {
   assert.deepEqual(imageBox({ width: 100, height: 100 }, 2), { x: 0, y: 25, width: 100, height: 50 });
   assert.deepEqual(imageBox({ width: 100, height: 100 }, 0.5), { x: 25, y: 0, width: 50, height: 100 });
+});
+
+test("per-panel label offsets respect letterboxing without changing layout or fitted height", () => {
+  const box = {width:100,height:100};
+  assert.deepEqual(labelPosition(box,2,{}),{x:1,y:26});
+  assert.deepEqual(labelPosition(box,2,{label_offset_x_mm:8,label_offset_y_mm:-2}),{x:9,y:24});
+  assert.deepEqual(labelPosition(box,0.5,{label_offset_x_mm:-3,label_offset_y_mm:4}),{x:23,y:5});
+  const adjusted = {...base,panels:base.panels.map(panel=>({...panel,label_offset_x_mm:8,label_offset_y_mm:2}))};
+  assert.deepEqual(panelBox(adjusted,adjusted.panels[0]),panelBox(base,base.panels[0]));
+  assert.equal(fittedHeight(adjusted,[2,1]),fittedHeight(base,[2,1]));
 });
 
 test("fitting reports missing sources and oversized results without changing the layout", () => {
