@@ -101,6 +101,9 @@
 .composition-panel-row input, .composition-panel-row select { font-size: 12px; }
 .composition-panel-row button { height: 32px; background: var(--bg-subtle); border-radius: 4px; font-size: 12px; }
 .composition-label-placement { grid-column: 1 / -1; font-size: 12px; color: var(--text-soft); }
+.composition-panel-row .composition-label-toggle { grid-column: 1 / -1; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; }
+.composition-label-toggle input { width: auto; }
+.composition-label-toggle small { color: var(--text-muted); font-size: 11px; }
 .composition-label-placement summary { cursor: pointer; padding: 4px 0; color: var(--accent); }
 .composition-label-placement__controls { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; padding: 8px 0; }
 .composition-label-placement__controls label { width: 96px; }

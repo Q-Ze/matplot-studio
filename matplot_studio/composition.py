@@ -23,6 +23,7 @@ class Panel(BaseModel):
     rowspan: int = Field(default=1, ge=1, le=6, strict=True)
     colspan: int = Field(default=1, ge=1, le=6, strict=True)
     label: str = Field(default="", max_length=16, pattern=r"^[\x20-\x7e]*$")
+    skip_label: bool = Field(default=False, strict=True)
     label_offset_x_mm: float = Field(default=0, ge=-40, le=40)
     label_offset_y_mm: float = Field(default=0, ge=-40, le=40)
 
@@ -101,11 +102,12 @@ class Composition(BaseModel):
         return [available * value / sum(ratios) for value in ratios]
 
     def panel_label(self, index):
-        if self.labels == "none":
+        if self.labels == "none" or self.panels[index].skip_label:
             return ""
         if self.labels == "custom":
             return self.panels[index].label
-        letter = chr(ord("A" if self.labels == "upper" else "a") + index)
+        ordinal = sum(not panel.skip_label for panel in self.panels[:index])
+        letter = chr(ord("A" if self.labels == "upper" else "a") + ordinal)
         return f"({letter})" if self.labels == "parentheses" else letter
 
 

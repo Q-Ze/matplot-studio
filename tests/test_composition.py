@@ -273,6 +273,51 @@ class CompositionTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 Composition.model_validate(data)
 
+    def test_skip_labels_continue_numbering_in_all_modes(self):
+        layout = Composition(name="Shared labels",rows=1,columns=4,panels=[
+            {"plot":self.plot.plot,"row":1,"column":column,"label":f"Group {column}"} for column in range(1,5)])
+        original_boxes = [layout.panel_box(panel) for panel in layout.panels]
+        for skips, expected in [([False,True,False,False],["A","","B","C"]),
+                                ([True,False,True,False],["","A","","B"]),
+                                ([False,True,True,False],["A","","","B"]),
+                                ([True]*4,[""]*4)]:
+            for panel,skip in zip(layout.panels,skips): panel.skip_label=skip
+            for mode in ["upper","lower","parentheses","custom","none"]:
+                layout.labels=mode
+                actual = [layout.panel_label(index) for index in range(4)]
+                if mode=="upper": self.assertEqual(actual,expected)
+                elif mode=="lower": self.assertEqual(actual,[text.lower() for text in expected])
+                elif mode=="parentheses": self.assertEqual(actual,[f"({text.lower()})" if text else "" for text in expected])
+                elif mode=="custom": self.assertEqual(actual,["" if skip else f"Group {index+1}" for index,skip in enumerate(skips)])
+                else: self.assertEqual(actual,[""]*4)
+        self.assertEqual([layout.panel_box(panel) for panel in layout.panels],original_boxes)
+        for panel in layout.panels: panel.skip_label=False
+        layout.labels="upper"
+        self.assertEqual([layout.panel_label(index) for index in range(4)],list("ABCD"))
+        data = layout.model_dump()
+        for panel in data["panels"]: del panel["skip_label"]
+        self.assertFalse(Composition.model_validate(data).panels[0].skip_label)
+
+    def test_skipped_labels_persist_and_do_not_remove_artwork(self):
+        renderer = Mock()
+        with pymupdf.open() as source:
+            page=source.new_page(width=100,height=100)
+            page.draw_rect(page.rect,fill=(0.8,0.9,1),color=None)
+            renderer.export_image.return_value=RenderResult(True,"source",0,svg=source.tobytes())
+        layout = Composition(name="Shared A",rows=1,columns=3,labels="upper",panels=[
+            {"plot":self.plot.plot,"row":1,"column":column,"skip_label":column==2,
+             "label":"Keep me","label_offset_x_mm":-40 if column==2 else 0} for column in range(1,4)])
+        saved=self.saved.save(self.project,layout)
+        restored=Composition.model_validate(self.saved.read(self.project,saved["id"])["layout"])
+        self.assertTrue(restored.panels[1].skip_label)
+        self.assertEqual(restored.panels[1].label,"Keep me")
+        self.assertEqual(restored.panels[1].label_offset_x_mm,-40)
+        with pymupdf.open(stream=render_composition(self.store,renderer,self.project,restored,"pdf"),filetype="pdf") as document:
+            self.assertEqual(document[0].get_text().split(),["A","B"])
+            self.assertEqual(len(document[0].get_drawings()),3)
+        self.assertIn(b"<path",render_composition(self.store,renderer,self.project,restored,"svg"))
+        self.assertTrue(render_composition(self.store,renderer,self.project,restored,"png",72).startswith(b"\x89PNG"))
+
 
 if __name__ == "__main__":
     unittest.main()

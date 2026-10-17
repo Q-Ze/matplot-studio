@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { panelBox, fittedHeight, imageBox, labelPosition, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = require("../web/composition-geometry.js");
+const { panelBox, fittedHeight, imageBox, labelPosition, panelLabel, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = require("../web/composition-geometry.js");
 
 const base = { width_mm: 180, height_mm: 140, rows: 2, columns: 2,
   margin_mm: 4, gap_mm: 3, labels: "lower", label_size: 10,
@@ -112,6 +112,21 @@ test("per-panel label offsets respect letterboxing without changing layout or fi
   const adjusted = {...base,panels:base.panels.map(panel=>({...panel,label_offset_x_mm:8,label_offset_y_mm:2}))};
   assert.deepEqual(panelBox(adjusted,adjusted.panels[0]),panelBox(base,base.panels[0]));
   assert.equal(fittedHeight(adjusted,[2,1]),fittedHeight(base,[2,1]));
+});
+
+test("skipped panels hide labels without consuming letters or erasing custom text", () => {
+  const layout={...base,labels:"upper",panels:[{}, {skip_label:true,label:"Shared A"}, {}, {}]};
+  const labels=()=>layout.panels.map((_,index)=>panelLabel(layout,index));
+  assert.deepEqual(labels(),["A","","B","C"]);
+  layout.labels="lower"; assert.deepEqual(labels(),["a","","b","c"]);
+  layout.labels="parentheses"; assert.deepEqual(labels(),["(a)","","(b)","(c)"]);
+  layout.labels="custom"; assert.deepEqual(labels(),["","","",""]);
+  layout.panels[1].skip_label=false; assert.equal(labels()[1],"Shared A");
+  layout.labels="upper"; assert.deepEqual(labels(),["A","B","C","D"]);
+  layout.panels[0].skip_label=true; layout.panels[1].skip_label=true;
+  assert.deepEqual(labels(),["","","A","B"]);
+  layout.panels.reverse(); assert.deepEqual(labels(),["A","B","",""]);
+  layout.panels.forEach(panel=>panel.skip_label=true); assert.deepEqual(labels(),["","","",""]);
 });
 
 test("fitting reports missing sources and oversized results without changing the layout", () => {

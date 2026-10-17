@@ -78,7 +78,15 @@
     const visible = imageBox(box, ratio);
     return { x: visible.x + 1 + (panel.label_offset_x_mm || 0), y: visible.y + 1 + (panel.label_offset_y_mm || 0) };
   }
-  const geometry = { panelBox, fittedHeight, imageBox, labelPosition, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights };
+  function panelLabel(layout, index) {
+    const panel = layout.panels[index];
+    if (layout.labels === "none" || panel.skip_label) return "";
+    if (layout.labels === "custom") return panel.label || "";
+    const ordinal = layout.panels.slice(0, index).filter(item => !item.skip_label).length;
+    const letter = String.fromCharCode((layout.labels === "upper" ? 65 : 97) + ordinal);
+    return layout.labels === "parentheses" ? `(${letter})` : letter;
+  }
+  const geometry = { panelBox, fittedHeight, imageBox, labelPosition, panelLabel, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights };
   if (typeof module !== "undefined" && module.exports) module.exports = geometry;
   else root.CompositionGeometry = geometry;
 })(typeof window !== "undefined" ? window : globalThis);

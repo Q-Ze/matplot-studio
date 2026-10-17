@@ -69,7 +69,7 @@
   let mode = "edit", thumbnailSession = 0, thumbnailQueue = Promise.resolve();
   const thumbnails = new Map();
   let importedImages = [];
-  const { panelBox, fittedHeight, labelPosition, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = window.CompositionGeometry;
+  const { panelBox, fittedHeight, labelPosition, panelLabel, rowWidths, rowHeights, parseWidthRatios, validateWidths, validateHeights } = window.CompositionGeometry;
   const clipboard = window.CompositionClipboard;
   const assetManager = window.CompositionAssets.create();
   const defaults = () => ({ name: "Figure 1", width_mm: 180, height_mm: 140, rows: 2, columns: 2,
@@ -156,10 +156,7 @@
     return entry;
   }
   function labelFor(index) {
-    if (layout.labels === "none") return "";
-    if (layout.labels === "custom") return layout.panels[index].label;
-    const letter = String.fromCharCode((layout.labels === "upper" ? 65 : 97) + index);
-    return layout.labels === "parentheses" ? `(${letter})` : letter;
+    return panelLabel(layout, index);
   }
   function drawGrid() {
     const grid = $("#compositionGrid"); grid.replaceChildren();
@@ -196,7 +193,7 @@
       label.style.fontSize = `${layout.label_size * 25.4 / 72 / layout.width_mm * 100}cqw`;
       const artwork = node("div", "", "composition-artwork");
       const source = thumbnail(panel);
-      label.hidden = source.state !== "ready";
+      label.hidden = source.state !== "ready" || !labelFor(index);
       if (source.state === "ready") {
         const anchor = labelPosition(box, source.ratio, panel);
         label.style.left = `${100 * anchor.x / box.width}%`;
@@ -235,11 +232,12 @@
         const [kind, id] = select.value.split(":"); delete panel.plot; delete panel.image; panel[kind] = id; invalidate();
       });
       sourceLabel.append(select); row.append(sourceLabel);
+      let customLabelInput;
       for (const [key, title] of [["row", "行"], ["column", "列"], ["rowspan", "跨行"], ["colspan", "跨列"], ["label", "自定义标注"]]) {
         const wrapper = node("label", title), input = document.createElement("input");
         input.setAttribute("aria-label", `子图 ${index + 1} ${title}`);
         input.value = panel[key]; input.type = key === "label" ? "text" : "number";
-        if (key === "label") { input.maxLength = 16; input.placeholder = "如 (a)"; input.disabled = layout.labels !== "custom"; }
+        if (key === "label") { customLabelInput = input; input.maxLength = 16; input.placeholder = "如 (a)"; input.disabled = layout.labels !== "custom" || panel.skip_label; }
         else { input.min = 1; input.max = 6; input.required = true; }
         input.addEventListener("input", () => { panel[key] = key === "label" ? input.value : Number(input.value); invalidate(); });
         wrapper.append(input); row.append(wrapper);
@@ -249,6 +247,11 @@
       up.addEventListener("click", () => { [layout.panels[index - 1], layout.panels[index]] = [panel, layout.panels[index - 1]]; renderPanels(); invalidate(); });
       remove.addEventListener("click", () => { layout.panels.splice(index, 1); renderPanels(); invalidate(); });
       row.append(up, remove);
+      const skipLabel = node("label", "", "composition-label-toggle");
+      const skip = document.createElement("input"); skip.type = "checkbox"; skip.checked = Boolean(panel.skip_label);
+      skip.setAttribute("aria-label", `子图 ${index + 1} 跳过标号`);
+      skipLabel.append(skip, node("span", "跳过标号"), node("small", "不显示标号，也不占用字母顺序，可与前一张子图共用标号。"));
+      row.append(skipLabel);
       const placement = node("details", "", "composition-label-placement");
       placement.open = Boolean(panel.label_offset_x_mm || panel.label_offset_y_mm);
       const summary = node("summary", `子图 ${index + 1} 标号位置`);
@@ -257,14 +260,21 @@
       for (const [key, title] of [["label_offset_x_mm", "横移 · mm"], ["label_offset_y_mm", "纵移 · mm"]]) {
         const wrapper = node("label", title), input = document.createElement("input");
         input.type = "number"; input.min = -40; input.max = 40; input.step = 0.1; input.required = true;
-        input.value = panel[key] || 0; input.disabled = layout.labels === "none";
+        input.value = panel[key] || 0; input.disabled = layout.labels === "none" || panel.skip_label;
         input.setAttribute("aria-label", `子图 ${index + 1} 标号${title}`);
         input.addEventListener("input", () => { panel[key] = Number(input.value); invalidate(); });
         wrapper.append(input); controls.append(wrapper); offsets.push({ key, input });
       }
-      const reset = node("button", "复位"); reset.type = "button"; reset.disabled = layout.labels === "none";
+      const reset = node("button", "复位"); reset.type = "button"; reset.disabled = layout.labels === "none" || panel.skip_label;
       reset.setAttribute("aria-label", `复位子图 ${index + 1} 标号位置`);
       reset.addEventListener("click", () => { offsets.forEach(({ key, input }) => { panel[key] = 0; input.value = 0; }); invalidate(); });
+      skip.addEventListener("change", () => {
+        panel.skip_label = skip.checked;
+        offsets.forEach(({ input }) => { input.disabled = layout.labels === "none" || panel.skip_label; });
+        reset.disabled = layout.labels === "none" || panel.skip_label;
+        customLabelInput.disabled = layout.labels !== "custom" || panel.skip_label;
+        invalidate();
+      });
       controls.append(reset, node("span", "右移、下移填正数；左移、上移填负数。仅移动标号，可避开轴标题。"));
       placement.append(summary, controls); row.append(placement); container.append(row);
     });
