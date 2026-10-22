@@ -56,12 +56,17 @@
           report(""); update(); return;
         }
         if (action !== "export" || !selected().length) return;
-        const ids = selected(), exportingProject = project;
+        let ids = selected();
+        const exportingProject = project;
         busy = true; setBusy(true);
         dialog.querySelectorAll("button, input, select").forEach(control => { control.disabled = true; });
         dialog.setAttribute("aria-busy", "true");
         try {
-          await beforeExport(exportingProject, ids, report);
+          const updatedIds = await beforeExport(exportingProject, ids, report);
+          if (updatedIds) {
+            dialog.querySelectorAll('[data-plot-id]:checked').forEach((input, index) => { input.dataset.plotId = updatedIds[index]; });
+            ids = updatedIds;
+          }
           report("正在打包所选图表…");
           const response = await fetch(`/api/projects/${encodeURIComponent(exportingProject.id)}/export`, {
             method: "POST", headers: {"Content-Type":"application/json"},

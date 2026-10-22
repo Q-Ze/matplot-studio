@@ -61,6 +61,36 @@ class ProjectExportTests(unittest.TestCase):
         result = Renderer(timeout_seconds=15).render(restored.path, restored.code)
         self.assertTrue(result.ok, result.message)
 
+    def test_export_names_directories_by_metadata_id_without_rewriting_code(self):
+        original = self.a.code.replace("PLOT_META = {", "PLOT_META: dict = {")
+        original = original.replace("'id': 'figure-a'", "'id': 'old-id', '说明': '保留中文', 'id': 'copied-id'  # 保留注释\n")
+        original += "\n# copied-id is used elsewhere too\nREFERENCE = 'copied-id'\n"
+        original = original.replace("\n", "\r\n")
+        self.a.path.write_bytes(original.encode("utf-8"))
+        self.put(f"plots/{self.a.plot}/data/copied-id.csv", b"copied-id,1\n")
+        original_manifest = (self.path / "project.json").read_bytes()
+        payload = self.store.export_project(self.project, [self.b.plot, self.a.plot])
+        files = self.store.files_from_zip(payload)
+        manifest = json.loads(files["project.json"])
+        self.assertEqual([item["id"] for item in manifest["plots"]], [self.b.plot, "copied-id"])
+        target = ProjectStore(self.root / "imported")
+        imported = target.import_project(files)
+        self.assertEqual(files["plots/copied-id/plot.py"], original.encode("utf-8"))
+        self.assertEqual(target.read_plot(imported["id"], "copied-id").contract.meta["id"], "copied-id")
+        self.assertEqual(files["plots/copied-id/data/copied-id.csv"], b"copied-id,1\n")
+        self.assertEqual(self.a.path.read_bytes(), original.encode("utf-8"))
+        self.assertEqual((self.path / "project.json").read_bytes(), original_manifest)
+
+    def test_export_rejects_duplicate_ids_and_handles_swapped_directory_names(self):
+        self.b.path.write_bytes(self.a.path.read_bytes())
+        with self.assertRaises(StorageError) as error:
+            self.store.export_project(self.project, [self.a.plot, self.b.plot])
+        self.assertEqual(error.exception.code, "duplicate_plot_id")
+        self.a.path.write_bytes(self.b.code.encode())
+        files = self.store.files_from_zip(self.store.export_project(self.project, [self.a.plot, self.b.plot]))
+        self.assertEqual(files[f"plots/{self.a.plot}/plot.py"], self.a.code.encode())
+        self.assertEqual(files[f"plots/{self.b.plot}/plot.py"], self.b.code.encode())
+
     def test_full_project_and_current_saved_settings(self):
         self.store.write_plot(self.project, self.a.plot, self.a.code.replace("#3B6FB6", "#112233"), self.a.revision)
         payload = self.store.export_project(self.project, [self.a.plot, self.b.plot, self.c.plot])

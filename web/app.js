@@ -176,8 +176,11 @@
   const projectExporter = window.ProjectExporter.create({
     beforeExport: async (project, plots, report) => {
       if (project.id === state.project?.id && plots.includes(state.plot?.id)) {
+        const oldId = state.plot.id;
         await settleCurrentEditsForImport(report, "项目导出");
+        return plots.map(id => id === oldId ? state.plot.id : id);
       }
+      return plots;
     },
     setBusy: busy => {
       state.exporting = busy ? { kind: "project", format: "zip" } : null;
@@ -597,6 +600,7 @@
   }
 
   async function prepareClipboardPng(projectId, plotId, bounds) {
+    const selectedPlot = state.plot;
     if (state.propertyTimers.size) {
       await waitUntil(() => state.propertyTimers.size === 0, 3000);
     }
@@ -605,9 +609,10 @@
       const saved = await saveCode({ render: false });
       if (!saved) throw new ApiError("代码尚未保存，暂时无法复制 PNG。", 0);
     }
-    if (projectId !== state.project?.id || plotId !== state.plot?.id) {
+    if (projectId !== state.project?.id || selectedPlot !== state.plot) {
       throw new ApiError("当前图表已切换，请重新复制。", 0);
     }
+    plotId = selectedPlot.id;
 
     // Keep the clipboard image publication-quality. Logical display size is
     // derived from the generated pixels because PowerPoint ignores PNG pHYs metadata.
@@ -692,7 +697,7 @@
     }
 
     const projectId = state.project.id;
-    const plotId = state.plot.id;
+    const selectedPlot = state.plot;
     state.exporting = { kind, format };
     state.statusError = null;
     closeExportMenus();
@@ -708,9 +713,10 @@
         const saved = await saveCode({ render: false });
         if (!saved) return;
       }
-      if (projectId !== state.project?.id || plotId !== state.plot?.id) {
+      if (projectId !== state.project?.id || selectedPlot !== state.plot) {
         throw new ApiError("当前图表已切换，请重新执行导出。", 0);
       }
+      const plotId = selectedPlot.id;
 
       const endpoint = kind === "image" ? "image" : "data";
       const accept = kind === "image"
@@ -1116,15 +1122,18 @@
   }
 
   function syncCurrentPlotSummary(result) {
+    const oldId = state.plot?.id;
     for (const project of new Set([...state.projects, state.project])) {
       if (project?.id !== state.project?.id) continue;
       for (const plot of new Set([...project.plots, state.plot])) {
-        if (plot?.id !== state.plot?.id) continue;
+        if (plot?.id !== oldId) continue;
+        if (result.plot) plot.id = result.plot;
         if (result.meta?.name) plot.name = result.meta.name;
         Object.assign(plot.raw, result.meta || {}, { modified_at: result.modified_at ?? plot.raw?.modified_at,
           revision: result.revision ?? plot.raw?.revision });
       }
     }
+    if (state.plot?.id !== oldId) writeStorage("matplot.lastSelection", { projectId: state.project.id, plotId: state.plot.id });
     updateSelectionUI();
   }
 
@@ -1431,7 +1440,7 @@
       if (render && !state.dirty) await renderPlot();
       return !state.dirty;
     }
-    if (!state.dirty) {
+    if (!state.dirty && state.current.meta?.id === state.plot.id) {
       if (render) await renderPlot();
       return true;
     }
@@ -1504,7 +1513,7 @@
     if (state.saving) await waitUntil(() => !state.saving, 8000);
     if (state.rendering) await waitUntil(() => !state.rendering, 20000);
     if (!state.current || state.saving || state.rendering) return;
-    if (state.dirty) {
+    if (state.dirty || state.current.meta?.id !== state.plot.id) {
       await saveCode({ render: true });
       return;
     }
@@ -2167,14 +2176,15 @@
 
   function enqueuePropertyPatch(path, value, operation) {
     const projectId = state.project?.id;
-    const plotId = state.plot?.id;
-    if (!projectId || !plotId) return;
+    const selectedPlot = state.plot;
+    if (!projectId || !selectedPlot) return;
     state.patchChain = state.patchChain.catch(() => undefined).then(async () => {
-      if (projectId !== state.project?.id || plotId !== state.plot?.id) return;
+      if (projectId !== state.project?.id || selectedPlot !== state.plot) return;
       if (state.dirty) {
         const saved = await saveCode({ render: false });
         if (!saved) throw new Error("代码未保存，属性修改已暂停。");
       }
+      const plotId = selectedPlot.id;
       state.pendingSettings += 1;
       state.statusError = null;
       markFieldSyncing(path, true);
@@ -2781,6 +2791,7 @@
       const result = await apiRequest(endpoint, { method: "PATCH", body: JSON.stringify(isPlot
         ? { name, revision: currentPlot ? state.revision : target.plot.raw?.revision }
         : { name, expected_name: target.originalName }) });
+      const oldPlotId = target.plot?.id;
       for (const project of new Set([...state.projects, state.project, target.project])) {
         if (project?.id !== target.project.id) continue;
         if (!isPlot) {
@@ -2788,7 +2799,8 @@
           project.raw.name = result.project.name;
         } else {
           for (const plot of new Set([...project.plots, currentPlot ? state.plot : null, target.plot])) {
-            if (plot?.id !== target.plot.id) continue;
+            if (plot?.id !== oldPlotId) continue;
+            plot.id = result.plot;
             plot.name = result.meta.name;
             Object.assign(plot.raw, result.meta, { revision: result.revision, modified_at: result.modified_at });
           }
@@ -2802,6 +2814,7 @@
         dom.codeInput.value = result.code;
         dom.codeInput.setSelectionRange(start, end);
         updateLineNumbers(); updateCursorPosition(); updateExportControls();
+        writeStorage("matplot.lastSelection", { projectId: state.project.id, plotId: state.plot.id });
       }
       updateSelectionUI();
       clearStatusError();
