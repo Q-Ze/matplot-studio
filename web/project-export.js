@@ -10,7 +10,7 @@
         <div class="modal__heading"><h2 id="projectExportTitle">导出项目</h2>
           <button type="button" class="icon-button" data-action="close" aria-label="关闭项目导出">×</button></div>
         <label class="form-field"><span>选择项目</span><select id="exportProjectSelect"></select></label>
-        <p class="import-intro">选择要打包的图表。ZIP 包含所选图表的代码、参数、附属文件和项目公共文件，可通过“导入项目”继续编辑。不包含未选图表、拼图布局及示意图素材库。</p>
+        <p class="import-intro">勾选图表后导出独立 ZIP，图表目录按名称整理。缩略图来自已保存图表，点击可放大核对。包内保留代码、参数、附属文件和项目公共文件，可通过“导入项目”继续编辑；不包含未选图表、拼图布局及示意图素材库。</p>
         <div class="project-export-actions"><button type="button" class="button button--quiet" data-action="all">全选</button>
           <button type="button" class="button button--quiet" data-action="none">清空选择</button><span id="exportProjectCount"></span></div>
         <div class="project-export-plots" id="exportProjectPlots" role="group" aria-label="选择要导出的图表"></div>
@@ -18,8 +18,23 @@
         <div class="modal__actions"><button type="button" class="button button--quiet" data-action="close">取消</button>
           <button type="button" class="button button--primary" data-action="export">导出 ZIP</button></div>`;
       document.body.append(dialog);
+      const viewer = document.createElement("dialog");
+      viewer.className = "modal project-export-viewer";
+      viewer.innerHTML = '<div class="modal__heading"><h2></h2><button type="button" class="button button--quiet" aria-label="关闭图片预览">关闭预览</button></div><img alt="">';
+      viewer.querySelector("button").addEventListener("click", () => viewer.close());
+      document.body.append(viewer);
       const $ = selector => dialog.querySelector(selector);
       let projects = [], project, busy = false;
+      let previewSession = 0, observer;
+      const previewControllers = new Set(), previewUrls = new Set();
+      function clearPreviews() {
+        previewSession += 1;
+        observer?.disconnect();
+        previewControllers.forEach(controller => controller.abort()); previewControllers.clear();
+        previewUrls.forEach(url => URL.revokeObjectURL(url)); previewUrls.clear();
+        if (viewer.open) viewer.close();
+        viewer.querySelector("img").removeAttribute("src");
+      }
       const selected = () => [...dialog.querySelectorAll('[data-plot-id]:checked')].map(input => input.dataset.plotId);
       const report = (message, tone = "neutral") => {
         $("#exportProjectStatus").textContent = message;
@@ -32,14 +47,61 @@
         $('[data-action="export"]').disabled = busy || !count;
       }
       function render() {
+        clearPreviews();
         project = projects.find(item => item.id === $("#exportProjectSelect").value);
         const list = $("#exportProjectPlots"); list.replaceChildren();
+        const session = previewSession, projectId = project?.id, queue = [], previewPlots = new WeakMap();
+        let active = 0;
+        const pump = () => {
+          if (session !== previewSession) return;
+          while (active < 2 && queue.length) {
+            const {plot, button} = queue.shift(); active += 1;
+            const controller = new AbortController(); previewControllers.add(controller);
+            button.textContent = "正在生成预览…";
+            fetch(`/api/projects/${encodeURIComponent(projectId)}/plots/${encodeURIComponent(plot.id)}/export/image?format=svg&bounds=canvas`, {signal:controller.signal})
+              .then(async response => {
+                if (!response.ok) throw new Error("预览失败");
+                const blob = await response.blob();
+                if (session !== previewSession) return;
+                const url = URL.createObjectURL(blob); previewUrls.add(url);
+                const img = document.createElement("img"); img.src = url; img.alt = `${plot.name} 缩略图`;
+                button.replaceChildren(img);
+                button.setAttribute("aria-label", `放大预览 ${plot.name}`);
+                button.onclick = () => {
+                  viewer.querySelector("h2").textContent = plot.name;
+                  const image = viewer.querySelector("img"); image.src = url; image.alt = plot.name;
+                  viewer.showModal();
+                };
+              })
+              .catch(error => {
+                if (session !== previewSession || error.name === "AbortError") return;
+                button.textContent = "预览失败 · 点击重试";
+                button.setAttribute("aria-label", `重试预览 ${plot.name}`);
+                button.onclick = () => { button.onclick = null; queue.push({plot,button}); pump(); };
+              })
+              .finally(() => { previewControllers.delete(controller); active -= 1; pump(); });
+          }
+        };
+        observer = new IntersectionObserver(entries => {
+          if (session !== previewSession) return;
+          entries.filter(entry => entry.isIntersecting).forEach(entry => {
+            observer.unobserve(entry.target);
+            queue.push({plot:previewPlots.get(entry.target), button:entry.target});
+          });
+          pump();
+        }, {root:list, rootMargin:"120px"});
         for (const plot of project?.plots || []) {
+          const card = document.createElement("div"); card.className = "project-export-card";
+          const preview = document.createElement("button"); preview.type = "button"; preview.className = "project-export-thumbnail";
+          preview.textContent = "等待预览…"; preview.dataset.previewPlot = plot.id;
+          preview.setAttribute("aria-label", `预览 ${plot.name}`);
           const label = document.createElement("label");
           const input = document.createElement("input"); input.type = "checkbox";
           input.dataset.plotId = plot.id; input.checked = true;
           const name = document.createElement("span"); name.textContent = plot.name;
-          label.append(input, name); list.append(label);
+          label.append(input, name); card.append(preview, label); list.append(card);
+          previewPlots.set(preview, plot);
+          observer.observe(preview);
         }
         if (!project?.plots.length) list.textContent = "此项目暂无图表。";
         report(""); update();
@@ -47,6 +109,7 @@
       $("#exportProjectSelect").addEventListener("change", render);
       $("#exportProjectPlots").addEventListener("change", () => { report(""); update(); });
       dialog.addEventListener("cancel", event => { if (busy) event.preventDefault(); });
+      dialog.addEventListener("close", clearPreviews);
       dialog.addEventListener("click", async event => {
         const action = event.target.closest("[data-action]")?.dataset.action;
         if (!action || busy) return;

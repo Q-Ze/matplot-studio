@@ -25,7 +25,9 @@ class RenameTests(unittest.TestCase):
         original_source = self.plot.code
         updated = self.store.rename_plot(project, plot, "  新图表 'α'  ", self.plot.revision)
         self.store.rename_project(project, " 新项目 / 结果 ", "原项目")
-        self.assertEqual(updated.path, self.plot.path)
+        self.assertEqual(updated.plot, self.plot.plot)
+        self.assertEqual(updated.path.parent.name, "新图表 'α'")
+        self.assertFalse(self.plot.path.parent.exists())
         self.assertEqual(updated.contract.settings, self.plot.contract.settings)
         self.assertEqual(updated.contract.schema, self.plot.contract.schema)
         self.assertEqual(updated.contract.meta["name"], "新图表 'α'")

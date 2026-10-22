@@ -87,7 +87,41 @@ class ProjectStore:
     def plot_path(self, project: str, plot: str) -> Path:
         self._check_name(plot, "图表")
         project_path = self.project_path(project)
-        return self._inside_workspace(project_path / "plots" / plot / "plot.py")
+        directory = self._plot_directory(project_path, plot)
+        return self._inside_workspace(project_path / "plots" / directory / "plot.py")
+
+    def _plot_directory(self, project_path: Path, plot: str) -> str:
+        manifest = self._load_project_meta(project_path)
+        item = next((item for item in manifest.get("plots", []) if isinstance(item, dict) and item.get("id") == plot), {})
+        directory = item.get("directory", plot)
+        self._check_plot_directory(directory)
+        return directory
+
+    @staticmethod
+    def _check_plot_directory(value: str) -> None:
+        if (not isinstance(value, str) or not value or value.startswith(".") or
+            any(char in value for char in '/\\\x00') or len(value.encode("utf-8")) > 255):
+            raise StorageError("invalid_path", "无效的图表目录名", status_code=422)
+
+    @staticmethod
+    def plot_directory_base(name: str) -> str:
+        value = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]', "_", unicodedata.normalize("NFC", name)).strip(" .")
+        value = value.encode("utf-8")[:160].decode("utf-8", errors="ignore").rstrip(" .") or "plot"
+        if re.fullmatch(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?", value):
+            value = "_" + value
+        return value
+
+    @classmethod
+    def _named_plot_directory(cls, name: str, plot_id: str, occupied) -> str:
+        base = cls.plot_directory_base(name)
+        keys = {unicodedata.normalize("NFC", item).casefold() for item in occupied}
+        candidate, index = base, 1
+        while unicodedata.normalize("NFC", candidate).casefold() in keys:
+            suffix = f" -- {plot_id}" + (f"-{index}" if index > 1 else "")
+            prefix = base.encode("utf-8")[:240 - len(suffix.encode("utf-8"))].decode("utf-8", errors="ignore")
+            candidate = prefix + suffix
+            index += 1
+        return candidate
 
     def _load_project_meta(self, project_path: Path) -> Dict[str, Any]:
         meta_path = project_path / "project.json"
@@ -439,6 +473,7 @@ class ProjectStore:
             raise cls._import_error("project.json.plots 必须是数组")
 
         manifest_ids: List[str] = []
+        directories: Dict[str, str] = {}
         for index, item in enumerate(manifest_plots):
             if not isinstance(item, dict) or not isinstance(item.get("id"), str):
                 raise cls._import_error(f"project.json.plots[{index}].id 必须是字符串")
@@ -450,6 +485,11 @@ class ProjectStore:
             if plot_id in manifest_ids:
                 raise cls._import_error("project.json.plots 包含重复 id", plot=plot_id)
             manifest_ids.append(plot_id)
+            directory = item.get("directory", plot_id)
+            cls._check_plot_directory(directory)
+            if directory in directories.values():
+                raise cls._import_error("多个图表不能使用同一目录")
+            directories[plot_id] = directory
 
         actual_ids = set()
         for path in files:
@@ -460,13 +500,13 @@ class ProjectStore:
                 raise cls._import_error("plots 下的文件必须位于 plots/<id>/ 中", path=path)
             plot_id = parts[1]
             try:
-                cls._check_name(plot_id, "图表")
+                cls._check_plot_directory(plot_id)
             except StorageError as exc:
                 raise cls._import_error("plots 目录中包含无效的图表 id", plot=plot_id) from exc
             actual_ids.add(plot_id)
         if not actual_ids:
             raise cls._import_error("项目中至少需要一个 plots/<id>/plot.py")
-        if set(manifest_ids) != actual_ids:
+        if set(directories.values()) != actual_ids:
             raise cls._import_error(
                 "project.json.plots 必须与 plots 目录中的图表一致",
                 manifest_plots=manifest_ids,
@@ -475,7 +515,7 @@ class ProjectStore:
 
         contracts: Dict[str, PlotContract] = {}
         for plot_id in manifest_ids:
-            source_path = f"plots/{plot_id}/plot.py"
+            source_path = f"plots/{directories[plot_id]}/plot.py"
             source_bytes = files.get(source_path)
             if source_bytes is None:
                 raise cls._import_error("每个图表目录都必须包含 plot.py", plot=plot_id)
@@ -486,7 +526,7 @@ class ProjectStore:
             contract = validate_plot_source(source, filename=source_path)
             if contract.meta["id"] != plot_id:
                 raise cls._import_error(
-                    "plot 目录名称必须与 PLOT_META.id 一致",
+                    "项目清单中的图表 ID 必须与 PLOT_META.id 一致",
                     plot=plot_id,
                     meta_id=contract.meta["id"],
                 )
@@ -499,6 +539,7 @@ class ProjectStore:
             "plots": [
                 {
                     "id": plot_id,
+                    "directory": directories[plot_id],
                     "name": contracts[plot_id].meta["name"],
                     "description": contracts[plot_id].meta["description"],
                 }
@@ -511,7 +552,7 @@ class ProjectStore:
         ).encode("utf-8")
         plot_summaries = []
         for plot_id in manifest_ids:
-            source = normalized_files[f"plots/{plot_id}/plot.py"].decode("utf-8")
+            source = normalized_files[f"plots/{directories[plot_id]}/plot.py"].decode("utf-8")
             plot_summary = dict(contracts[plot_id].meta)
             plot_summary.update({"id": plot_id, "valid": True, "revision": revision_for(source)})
             plot_summaries.append(plot_summary)
@@ -526,6 +567,7 @@ class ProjectStore:
         ignored = {"__pycache__", "__MACOSX", "node_modules", "venv"}
         files: Dict[str, bytes] = {}
         export_ids: Dict[str, str] = {}
+        export_directories: Dict[str, str] = {}
         total = 0
 
         def collect(path: Path, relative: str) -> None:
@@ -556,7 +598,7 @@ class ProjectStore:
             manifest = self._load_project_meta(self.project_path(project))
             try:
                 for plot in plots:
-                    directory = root / "plots" / plot
+                    directory = root / "plots" / self._plot_directory(root, plot)
                     if directory.is_symlink():
                         raise StorageError("invalid_project_export", f"图表目录不能是符号链接：{plot}", status_code=422)
                     if not (directory / "plot.py").is_file():
@@ -573,6 +615,8 @@ class ProjectStore:
                         previous = next(old for old, new in export_ids.items() if new == export_id)
                         raise StorageError("duplicate_plot_id", f"图表 {previous} 和 {plot} 使用相同的 PLOT_META.id：{export_id}，请先为它们设置不同 ID", status_code=409)
                     export_ids[plot] = export_id
+                    export_directories[plot] = self._named_plot_directory(
+                        validate_plot_source(source).meta["name"], export_id, export_directories.values())
                 for child in sorted(root.iterdir()):
                     if child.name not in {"project.json", "plots", "compositions", "composition-images"}:
                         collect(child, child.name)
@@ -580,14 +624,14 @@ class ProjectStore:
                 raise StorageError("project_export_failed", "读取项目文件失败，请检查文件是否存在且可读取", status_code=422) from exc
             # Remap folders together, retaining code bytes and all relative sidecars.
             files = {
-                (str(PurePosixPath("plots", export_ids[PurePosixPath(path).parts[1]], *PurePosixPath(path).parts[2:]))
+                (str(PurePosixPath("plots", export_directories[PurePosixPath(path).parts[1]], *PurePosixPath(path).parts[2:]))
                  if PurePosixPath(path).parts[0] == "plots" else path): content
                 for path, content in files.items()
             }
             files["project.json"] = (json.dumps({
                 "id": project, "name": manifest.get("name", project),
                 "description": manifest.get("description", ""),
-                "plots": [{"id": export_ids[plot]} for plot in plots],
+                "plots": [{"id": export_ids[plot], "directory": export_directories[plot]} for plot in plots],
             }, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
             try:
                 # Validate the very same contract and size limits used by ZIP import.
@@ -733,9 +777,15 @@ class ProjectStore:
                 )
 
             summaries = [dict(item[3]) for item in validated]
+            occupied = [path.name for path in plots_path.iterdir()]
+            directories = {}
+            for summary in summaries:
+                directories[summary["id"]] = self._named_plot_directory(summary["name"], summary["id"], occupied)
+                occupied.append(directories[summary["id"]])
             imported_manifest_items = [
                 {
                     "id": summary["id"],
+                    "directory": directories[summary["id"]],
                     "name": summary["name"],
                     "description": summary["description"],
                 }
@@ -759,13 +809,13 @@ class ProjectStore:
                     (staged_dir / "plot.py").write_bytes(source.encode("utf-8"))
 
                 for plot_id, _source, _contract, _summary in validated:
-                    os.replace(staging_path / plot_id, plots_path / plot_id)
+                    os.replace(staging_path / plot_id, plots_path / directories[plot_id])
                     moved_ids.append(plot_id)
                 self._atomic_write(project_path / "project.json", manifest_text)
             except Exception:
                 if staging_path is not None:
                     for plot_id in reversed(moved_ids):
-                        installed = plots_path / plot_id
+                        installed = plots_path / directories[plot_id]
                         if installed.exists():
                             os.replace(installed, staging_path / plot_id)
                 raise
@@ -792,27 +842,7 @@ class ProjectStore:
             if current.revision != expected_revision:
                 raise StorageError("revision_conflict", "图表已更新，请重新载入后重命名", status_code=409)
             source = rename_plot_source(current.code, name)
-            if current.contract.meta["id"] != plot:
-                return self.write_plot(project, plot, source, current.revision)
-            project_path = self.project_path(project)
-            manifest = self._load_project_meta(project_path)
-            items = manifest.get("plots", [])
-            if not isinstance(items, list):
-                raise StorageError("invalid_project", "project.json.plots 必须是数组", status_code=500)
-            matching = [item for item in items if isinstance(item, dict) and item.get("id") == plot]
-            if matching:
-                for item in matching:
-                    item["name"] = name
-            else:
-                items.append({"id": plot, "name": name, "description": current.contract.meta.get("description", "")})
-            manifest["plots"] = items
-            self._atomic_write(current.path, source)
-            try:
-                self._atomic_write(project_path / "project.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-            except Exception:
-                self._atomic_write(current.path, current.code)
-                raise
-            return self.read_plot(project, plot)
+            return self.write_plot(project, plot, source, current.revision)
 
     def delete_project(self, project: str) -> Dict[str, Any]:
         """Remove a project after atomically moving it out of the visible workspace."""
@@ -898,8 +928,14 @@ class ProjectStore:
             manifest = self._load_project_meta(project_path)
             plots_path = self._inside_workspace(project_path / "plots")
             plots_path.mkdir(exist_ok=True)
-            slug = self._unique_slug(plots_path, self._slug_base(name, "plot"))
-            plot_dir = self._inside_workspace(plots_path / slug)
+            existing_ids = {item["id"] for item in manifest.get("plots", []) if isinstance(item, dict) and "id" in item}
+            base = self._slug_base(name, "plot")
+            slug, index = base, 2
+            while slug in existing_ids or (plots_path / slug).exists():
+                slug = f"{base}-{index}"
+                index += 1
+            directory = self._named_plot_directory(name, slug, [path.name for path in plots_path.iterdir()])
+            plot_dir = self._inside_workspace(plots_path / directory)
             plot_dir.mkdir()
             source = self._starter_plot_source(slug, name, description or "New Matplot Studio figure")
             validate_plot_source(source)
@@ -909,7 +945,7 @@ class ProjectStore:
             if not isinstance(manifest_plots, list):
                 manifest_plots = []
             manifest["id"] = project
-            manifest["plots"] = [*manifest_plots, {"id": slug, "name": name, "description": description}]
+            manifest["plots"] = [*manifest_plots, {"id": slug, "directory": directory, "name": name, "description": description}]
             self._atomic_write(
                 project_path / "project.json",
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -1008,27 +1044,30 @@ def render(data, settings):
                 } if isinstance(manifest_plots, list) else {}
                 if plots_path.is_dir():
                     plot_dirs = {}
+                    directory_ids = {item.get("directory", plot_id): plot_id for plot_id, item in manifest_by_id.items()}
                     for candidate in plots_path.iterdir():
-                        if not candidate.is_dir() or not SAFE_NAME.fullmatch(candidate.name):
+                        if not candidate.is_dir() or candidate.name.startswith("."):
                             continue
                         try:
                             candidate = self._inside_workspace(candidate)
                         except StorageError:
                             continue
                         if (candidate / "plot.py").is_file():
-                            plot_dirs[candidate.name] = candidate
+                            plot_id = directory_ids.get(candidate.name, candidate.name)
+                            if SAFE_NAME.fullmatch(plot_id):
+                                plot_dirs[plot_id] = candidate
                     manifest_order = [item["id"] for item in manifest_plots if isinstance(item, dict) and item.get("id") in plot_dirs]
                     remaining = sorted(set(plot_dirs) - set(manifest_order), key=str.casefold)
                     for plot_id in manifest_order + remaining:
                         plot_dir = plot_dirs[plot_id]
                         source_path = plot_dir / "plot.py"
-                        plot_info: Dict[str, Any] = {"id": plot_dir.name, "name": plot_dir.name}
-                        plot_info.update(manifest_by_id.get(plot_dir.name, {}))
+                        plot_info: Dict[str, Any] = {"id": plot_id, "name": plot_dir.name, "directory": plot_dir.name}
+                        plot_info.update(manifest_by_id.get(plot_id, {}))
                         try:
                             source = source_path.read_text(encoding="utf-8")
                             contract = validate_plot_source(source, filename=str(source_path))
                             plot_info.update(contract.meta)
-                            plot_info["id"] = plot_dir.name
+                            plot_info["id"] = plot_id
                             plot_info["valid"] = True
                             plot_info["revision"] = revision_for(source)
                         except Exception as exc:
@@ -1075,20 +1114,19 @@ def render(data, settings):
                     extra={"current_revision": current.revision},
                 )
             contract = validate_plot_source(code)
-            if contract.meta["id"] != plot:
-                return self._save_plot_with_directory_id(current, code, contract)
-            self._atomic_write(current.path, code)
-            return self.read_plot(project, plot)
+            return self._save_plot_with_directory_id(current, code, contract)
 
     def _save_plot_with_directory_id(self, current: PlotDocument, code: str, contract: PlotContract) -> PlotDocument:
-        """Rename a saved plot to its declared ID, keeping manifest and layouts valid."""
+        """Keep stable IDs separate from readable directories while saving atomically."""
         from .composition import Composition
 
         new_id = contract.meta["id"]
         self._check_name(new_id, "图表 ID")
         root = self.project_path(current.project)
-        old_directory = root / "plots" / current.plot
-        new_directory = root / "plots" / new_id
+        old_directory = root / "plots" / self._plot_directory(root, current.plot)
+        directory = self._named_plot_directory(contract.meta["name"], new_id,
+            [path.name for path in (root / "plots").iterdir() if path != old_directory])
+        new_directory = root / "plots" / directory
         if (old_directory.is_symlink() or (root / "plots").is_symlink() or
             (old_directory / "plot.py").is_symlink() or (root / "project.json").is_symlink()):
             raise StorageError("invalid_path", "无法重命名符号链接图表目录", status_code=422)
@@ -1097,9 +1135,9 @@ def render(data, settings):
         items = manifest.get("plots", [])
         if not isinstance(items, list):
             raise StorageError("invalid_project", "project.json.plots 必须是数组", status_code=422)
-        if os.path.lexists(new_directory) or any(isinstance(item, dict) and item.get("id") == new_id for item in items):
+        if new_id != current.plot and (os.path.lexists(root / "plots" / new_id) or any(isinstance(item, dict) and item.get("id") == new_id for item in items)):
             raise StorageError("plot_already_exists", f"图表 ID {new_id} 已被占用，请修改 PLOT_META.id 后再保存", status_code=409)
-        updated_item = {"id": new_id, "name": contract.meta["name"], "description": contract.meta["description"]}
+        updated_item = {"id": new_id, "directory": directory, "name": contract.meta["name"], "description": contract.meta["description"]}
         found = False
         for index, item in enumerate(items):
             if isinstance(item, dict) and item.get("id") == current.plot:
@@ -1112,7 +1150,7 @@ def render(data, settings):
         layouts = root / "compositions"
         if layouts.is_symlink():
             raise StorageError("invalid_path", "无法更新符号链接拼图目录", status_code=422)
-        for path in sorted(layouts.glob("*.json")):
+        for path in sorted(layouts.glob("*.json")) if new_id != current.plot else []:
             if path.is_symlink():
                 raise StorageError("invalid_path", "无法更新符号链接拼图文件", status_code=422)
             try:
@@ -1129,7 +1167,9 @@ def render(data, settings):
         changes.append((manifest_path, manifest_path.read_bytes().decode("utf-8"), json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"))
         changes.insert(0, (new_directory / "plot.py", current.path.read_bytes().decode("utf-8"), code))
         written = []
-        os.rename(old_directory, new_directory)
+        moved = old_directory != new_directory
+        if moved:
+            os.rename(old_directory, new_directory)
         try:
             for path, original, updated in changes:
                 self._atomic_write(path, updated)
@@ -1137,7 +1177,8 @@ def render(data, settings):
         except Exception:
             for path, original in reversed(written):
                 self._atomic_write(path, original)
-            os.rename(new_directory, old_directory)
+            if moved:
+                os.rename(new_directory, old_directory)
             raise
         return self.read_plot(current.project, new_id)
 

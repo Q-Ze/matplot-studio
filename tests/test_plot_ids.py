@@ -27,7 +27,7 @@ class PlotIdTests(unittest.TestCase):
         old_revision = self.layout["revision"]
         saved = self.store.write_plot(self.project, self.plot.plot, self.code, self.plot.revision)
         self.assertEqual(saved.plot, "canonical-id")
-        self.assertFalse(self.plot.path.parent.exists())
+        self.assertEqual(saved.path.parent.name, "Original")
         self.assertEqual(saved.path.read_text(), self.code)
         self.assertEqual((saved.path.parent / "data.csv").read_bytes(), b"x,y\n1,2\n")
         ids = [item["id"] for item in json.loads((self.root / "project.json").read_text())["plots"]]

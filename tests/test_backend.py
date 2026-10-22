@@ -330,8 +330,8 @@ class StorageTests(TemporaryWorkspace):
             set(plots[0]),
             {"id", "name", "description", "valid", "revision"},
         )
-        self.assertTrue((self.workspace / "demo-project" / "plots" / "alpha" / "plot.py").is_file())
-        self.assertTrue((self.workspace / "demo-project" / "plots" / "beta" / "plot.py").is_file())
+        self.assertTrue(store.plot_path("demo-project", "alpha").is_file())
+        self.assertTrue(store.plot_path("demo-project", "beta").is_file())
         manifest = json.loads(
             (self.workspace / "demo-project" / "project.json").read_text(encoding="utf-8")
         )

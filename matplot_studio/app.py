@@ -126,6 +126,9 @@ def _plot_payload(document: PlotDocument) -> Dict[str, Any]:
     return {
         "project": document.project,
         "plot": document.plot,
+        "directory": document.path.parent.name,
+        "directory_needs_sync": not (document.path.parent.name == ProjectStore.plot_directory_base(document.contract.meta["name"])
+            or document.path.parent.name.startswith(ProjectStore.plot_directory_base(document.contract.meta["name"]) + " -- ")),
         "code": document.code,
         "revision": document.revision,
         "modified_at": document.path.stat().st_mtime_ns // 1_000_000,

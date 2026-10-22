@@ -1440,7 +1440,7 @@
       if (render && !state.dirty) await renderPlot();
       return !state.dirty;
     }
-    if (!state.dirty && state.current.meta?.id === state.plot.id) {
+    if (!state.dirty && state.current.meta?.id === state.plot.id && !state.current.directory_needs_sync) {
       if (render) await renderPlot();
       return true;
     }
@@ -1513,7 +1513,7 @@
     if (state.saving) await waitUntil(() => !state.saving, 8000);
     if (state.rendering) await waitUntil(() => !state.rendering, 20000);
     if (!state.current || state.saving || state.rendering) return;
-    if (state.dirty || state.current.meta?.id !== state.plot.id) {
+    if (state.dirty || state.current.meta?.id !== state.plot.id || state.current.directory_needs_sync) {
       await saveCode({ render: true });
       return;
     }
