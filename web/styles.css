@@ -2309,6 +2309,17 @@ kbd {
   width: min(460px, calc(100% - 32px));
 }
 
+.modal--project-export { width: min(540px, calc(100% - 32px)); padding: 24px; }
+.modal--project-export select { width: 100%; min-height: 34px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; background: white; }
+.modal--project-export .form-field { margin-bottom: 14px; }
+.project-export-actions { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.project-export-actions span { margin-left: auto; font-size: 12px; color: var(--text-soft); }
+.project-export-plots { max-height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+.project-export-plots label { display: flex; align-items: center; gap: 10px; padding: 10px; cursor: pointer; }
+.project-export-plots label:hover { background: var(--bg-subtle); }
+.project-export-plots input { width: auto; flex: none; }
+.project-export-plots span { overflow-wrap: anywhere; min-width: 0; }
+
 .import-intro {
   margin: -3px 0 15px;
   color: var(--text-soft);

@@ -24,6 +24,7 @@
     importProjectButton: $("#importProjectButton"),
     newProjectButton: $("#newProjectButton"),
     compositionButton: $("#compositionButton"),
+    exportProjectButton: $("#exportProjectButton"),
     breadcrumbProject: $("#breadcrumbProject"),
     breadcrumbPlot: $("#breadcrumbPlot"),
     globalStatus: $("#globalStatus"),
@@ -171,6 +172,20 @@
     panning: null,
     statusError: null,
   };
+
+  const projectExporter = window.ProjectExporter.create({
+    beforeExport: async (project, plots, report) => {
+      if (project.id === state.project?.id && plots.includes(state.plot?.id)) {
+        await settleCurrentEditsForImport(report, "项目导出");
+      }
+    },
+    setBusy: busy => {
+      state.exporting = busy ? { kind: "project", format: "zip" } : null;
+      updateExportControls(); updateActivityStatus();
+      if (!busy) resumeAutosaveIfNeeded();
+    },
+    download: triggerDownload,
+  });
 
   class ApiError extends Error {
     constructor(message, status = 0, payload = null) {
@@ -1085,6 +1100,7 @@
   function updateTreeActionAvailability() {
     const disabled = workspaceMutationBusy();
     dom.compositionButton.disabled = disabled || !state.project;
+    dom.exportProjectButton.disabled = disabled || !state.projects.length;
     dom.compositionButton.title = state.project ? `为“${state.project.name}”创建科研拼图` : "请先选择项目中的图表";
     if (dom.importProjectButton) dom.importProjectButton.disabled = disabled;
     if (dom.newProjectButton) dom.newProjectButton.disabled = disabled;
@@ -2242,7 +2258,7 @@
   }
 
   function resumeAutosaveIfNeeded() {
-    if (!state.dirty || !state.current || !dom.autoRenderToggle.checked || state.importing || state.deleting || dom.renameDialog.open) return;
+    if (!state.dirty || !state.current || !dom.autoRenderToggle.checked || state.importing || state.deleting || state.exporting || dom.renameDialog.open) return;
     clearTimeout(state.autosaveTimer);
     state.autosaveTimer = window.setTimeout(() => runAndRender({ source: "auto" }), AUTOSAVE_DELAY);
   }
@@ -3046,6 +3062,12 @@
     dom.propertySearch.addEventListener("input", () => renderProperties());
     dom.refreshProjectsButton.addEventListener("click", () => fetchProjects());
     dom.importProjectButton.addEventListener("click", openImportProjectDialog);
+    dom.exportProjectButton.addEventListener("click", () => {
+      if (rejectBusyAction("导出项目")) return;
+      projectExporter.open(state.projects.map(project => ({ ...project,
+        plots: window.ProjectSorting.sortPlots(project.plots, state.plotSort),
+      })), state.project?.id);
+    });
     dom.newProjectButton.addEventListener("click", openCreateProjectDialog);
     dom.chooseProjectZip.addEventListener("click", () => dom.projectZipInput.click());
     dom.chooseProjectFolder.addEventListener("click", () => dom.projectFolderInput.click());

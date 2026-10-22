@@ -517,6 +517,71 @@ class ProjectStore:
             plot_summaries.append(plot_summary)
         return normalized_files, normalized_manifest, plot_summaries
 
+    def export_project(self, project: str, plots: List[str]) -> bytes:
+        """Package selected plot folders and shared project files for project import."""
+        if not plots or len(set(plots)) != len(plots):
+            raise StorageError("invalid_project_export", "请至少选择一张图表，且不能重复选择", status_code=422)
+        for plot in plots:
+            self._check_name(plot, "图表")
+        ignored = {"__pycache__", "__MACOSX", "node_modules", "venv"}
+        files: Dict[str, bytes] = {}
+        total = 0
+
+        def collect(path: Path, relative: str) -> None:
+            nonlocal total
+            if path.name.startswith(".") or path.name in ignored or path.suffix in {".pyc", ".pyo"}:
+                return
+            mode = path.lstat().st_mode
+            if stat.S_ISLNK(mode) or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise StorageError("invalid_project_export", f"无法打包链接或特殊文件：{relative}", status_code=422)
+            if stat.S_ISDIR(mode):
+                for child in sorted(path.iterdir()):
+                    collect(child, f"{relative}/{child.name}")
+                return
+            if len(files) >= MAX_IMPORT_FILES - 1:
+                raise StorageError("project_export_too_large", f"压缩包最多包含 {MAX_IMPORT_FILES} 个文件，请减少选择", status_code=413)
+            with path.open("rb") as source:
+                content = source.read(MAX_IMPORT_FILE_BYTES + 1)
+            total += len(content)
+            if len(content) > MAX_IMPORT_FILE_BYTES or total > MAX_IMPORT_TOTAL_BYTES:
+                raise StorageError("project_export_too_large", "为保证可重新导入，单个文件不能超过 2 MiB，总大小不能超过 16 MiB；请减少选择或精简附属文件", status_code=413)
+            files[relative] = content
+
+        with self._lock:
+            self._check_name(project, "项目")
+            root = self.workspace / project
+            if root.is_symlink() or (root / "project.json").is_symlink() or (root / "plots").is_symlink():
+                raise StorageError("invalid_project_export", "项目、清单和图表目录不能是符号链接", status_code=422)
+            manifest = self._load_project_meta(self.project_path(project))
+            try:
+                for plot in plots:
+                    directory = root / "plots" / plot
+                    if directory.is_symlink():
+                        raise StorageError("invalid_project_export", f"图表目录不能是符号链接：{plot}", status_code=422)
+                    if not (directory / "plot.py").is_file():
+                        raise StorageError("plot_not_found", f"图表不存在：{plot}", status_code=404)
+                    collect(directory, f"plots/{plot}")
+                for child in sorted(root.iterdir()):
+                    if child.name not in {"project.json", "plots", "compositions", "composition-images"}:
+                        collect(child, child.name)
+            except OSError as exc:
+                raise StorageError("project_export_failed", "读取项目文件失败，请检查文件是否存在且可读取", status_code=422) from exc
+            files["project.json"] = (json.dumps({
+                "id": project, "name": manifest.get("name", project),
+                "description": manifest.get("description", ""),
+                "plots": [{"id": plot} for plot in plots],
+            }, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            try:
+                # Validate the very same contract and size limits used by ZIP import.
+                files, _, _ = self._validated_import(files)
+            except StorageError as exc:
+                raise StorageError("invalid_project_export", f"无法生成可导入的项目包：{exc.message}", status_code=exc.status_code) from exc
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for relative, content in sorted(files.items()):
+                    archive.writestr(relative, content)
+            return buffer.getvalue()
+
     def import_project(self, files: Mapping[str, bytes]) -> Dict[str, Any]:
         """Validate and atomically install one self-contained Matplot Studio project."""
 

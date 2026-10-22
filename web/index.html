@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f5f7f8" />
     <title>Matplot Studio</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20261017-4" />
+    <link rel="stylesheet" href="./styles.css?v=20261022-1" />
   </head>
   <body>
     <div class="app" id="app">
@@ -36,6 +36,7 @@
             <span id="globalStatusText">正在连接</span>
           </div>
           <span class="shortcut-hint"><kbd>Ctrl</kbd><span>/</span><kbd>⌘</kbd><span>+</span><kbd>Enter</kbd></span>
+          <button class="button button--quiet" id="exportProjectButton" type="button" disabled title="选择项目中的图表并打包为 ZIP">导出项目</button>
           <button class="button button--quiet" id="compositionButton" type="button" disabled title="为当前项目创建科研拼图">
             <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M3 3h6v6H3ZM12 3h5v6h-5ZM3 12h6v5H3ZM12 12h5v5h-5Z" /></svg>
             <span>科研拼图</span>
@@ -413,6 +414,7 @@
     <script src="./composition-assets.js?v=20261016-1" defer></script>
     <script src="./composition.js?v=20261017-4" defer></script>
     <script src="./project-sorting.js?v=20261016-1" defer></script>
-    <script src="./app.js?v=20261016-1" defer></script>
+    <script src="./project-export.js?v=20261022-1" defer></script>
+    <script src="./app.js?v=20261022-1" defer></script>
   </body>
 </html>

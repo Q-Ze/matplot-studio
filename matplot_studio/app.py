@@ -35,6 +35,12 @@ class CreateItem(BaseModel):
     description: str = ""
 
 
+class ProjectExport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plots: List[Annotated[str, Field(min_length=1, max_length=128)]] = Field(min_length=1, max_length=255)
+
+
 class SettingOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -243,6 +249,14 @@ def create_app(
                 status_code=415,
             )
         return {"project": store.import_project(files)}
+
+    @app.post("/api/projects/{project}/export")
+    def export_project(project: str, item: ProjectExport) -> Response:
+        content = store.export_project(project, item.plots)
+        return Response(content, media_type="application/zip", headers={
+            "Content-Disposition": f'attachment; filename="{project}-selected.zip"',
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        })
 
     @app.delete("/api/projects/{project}")
     def delete_project(project: str) -> Dict[str, Any]:
